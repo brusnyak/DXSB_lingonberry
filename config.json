@@ -1,0 +1,84 @@
+{
+  "database_path": "dex_analytics.db",
+  "telegram": {
+    "bot_token": "REPLACE_ME_OR_USE_TELEGRAM_BOT_TOKEN_ENV",
+    "chat_id": "REPLACE_ME_OR_USE_TELEGRAM_CHAT_ID_ENV"
+  },
+  "monitored_chains": ["solana", "bsc", "arbitrum", "base"],
+  "established_tokens": [],
+  "search_queries": ["solana meme", "base meme", "arbitrum small cap"],
+  "execution_links": {
+    "solana": {
+      "BullX": "https://bullx.io/",
+      "Trojan": "https://t.me/TrojanBot?start={token}",
+      "DexScreener": "https://dexscreener.com/{chain}/{pair}"
+    },
+    "ethereum": {
+      "BananaGun": "https://t.me/BananaGunSniper_bot?start={token}",
+      "Uniswap": "https://app.uniswap.org/#/swap?outputCurrency={token}",
+      "DexScreener": "https://dexscreener.com/{chain}/{pair}"
+    },
+    "bsc": {
+      "PancakeSwap": "https://pancakeswap.finance/swap?outputCurrency={token}",
+      "DexScreener": "https://dexscreener.com/{chain}/{pair}"
+    },
+    "arbitrum": {
+      "Uniswap": "https://app.uniswap.org/#/swap?chain=arbitrum&outputCurrency={token}",
+      "DexScreener": "https://dexscreener.com/{chain}/{pair}"
+    },
+    "base": {
+      "Uniswap": "https://app.uniswap.org/#/swap?chain=base&outputCurrency={token}",
+      "DexScreener": "https://dexscreener.com/{chain}/{pair}"
+    }
+  },
+  "filters": {
+    "min_liquidity_usd": 50000,
+    "max_liquidity_usd": 5000000,
+    "min_volume_24h_usd": 120000,
+    "max_fdv_usd": 80000000,
+    "min_age_hours": 2,
+    "max_age_hours": 720
+  },
+  "risk_checks": {
+    "strict_mode": true,
+    "gas": {
+      "enabled": true,
+      "default_max_gwei": 30,
+      "max_gwei_by_chain": {
+        "ethereum": 25,
+        "bsc": 8,
+        "arbitrum": 0.2,
+        "base": 0.2
+      }
+    }
+  },
+  "evm_rpc": {
+    "ethereum": "https://mainnet.infura.io/",
+    "bsc": "https://bsc-dataseed.binance.org",
+    "arbitrum": "https://arb1.arbitrum.io/rpc",
+    "base": "https://mainnet.base.org"
+  },
+  "trading": {
+    "bankroll_usd": 10000,
+    "max_open_signals": 4,
+    "max_position_pct_bankroll": 20,
+    "risk_by_quality_pct": {
+      "A+": 1.0,
+      "A": 0.75,
+      "B": 0.5
+    },
+    "allowed_quality_buckets": ["A+", "A", "B"],
+    "tp1_rr": 1.5,
+    "tp2_rr": 2.5,
+    "max_slippage_pct": 1.5,
+    "slippage_impact_multiplier": 1.8,
+    "signal_cooldown_hours": 24
+  },
+  "runtime": {
+    "scan_interval_sec": 180,
+    "profile_scan_limit": 200,
+    "http_timeout_sec": 10,
+    "timezone_offset_hours": 1,
+    "active_hours_local": [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+  }
+}
