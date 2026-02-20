@@ -55,6 +55,20 @@ Replace defaults with your personal referral/deep links as needed.
 ## Recommended deployment (no Docker)
 Use Ubuntu VPS + `systemd`.
 
+One-command scripts are included:
+- `/Users/yegor/Documents/Agency & Security Stuff/Development/dexscreener-bot/scripts/deploy.sh`
+- `/Users/yegor/Documents/Agency & Security Stuff/Development/dexscreener-bot/scripts/update.sh`
+
+First deploy on VPS:
+```bash
+APP_DIR=/opt/dxsb LINUX_USER=$USER bash scripts/deploy.sh
+```
+
+Update after new push:
+```bash
+APP_DIR=/opt/dxsb BRANCH=main bash scripts/update.sh
+```
+
 Example unit file (`/etc/systemd/system/dxsb.service`):
 ```ini
 [Unit]
