@@ -5,5 +5,5 @@ __pycache__/
 *.pyc
 dex_analytics.db
 data/
-.key
-.pub
+*.key
+*.pub
