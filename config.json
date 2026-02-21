@@ -1,12 +1,12 @@
 {
-  "database_path": "dex_analytics.db",
+  "database_path": "data/journal/dex_analytics.db",
   "telegram": {
     "bot_token": "REPLACE_ME_OR_USE_TELEGRAM_BOT_TOKEN_ENV",
     "chat_id": "REPLACE_ME_OR_USE_TELEGRAM_CHAT_ID_ENV"
   },
   "monitored_chains": ["solana", "bsc", "arbitrum", "base"],
   "established_tokens": [],
-  "search_queries": ["solana meme", "base meme", "arbitrum small cap"],
+  "search_queries": ["ai crypto", "blockchain innovation", "modern tech", "solana ai", "base blockchain"],
   "execution_links": {
     "solana": {
       "BullX": "https://bullx.io/",
