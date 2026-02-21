@@ -11,7 +11,7 @@ class BaseAdapter(ABC):
         pass
 
     @abstractmethod
-    def fetch_candles(self, symbol_or_address: str, chain_id: Optional[str] = None) -> List[Candle]:
+    def fetch_candles(self, symbol_or_address: str, interval: str = "1m", limit: int = 100, chain_id: Optional[str] = None) -> List[Candle]:
         """Fetch OHLCV historical data for ICT analysis."""
         pass
 
@@ -79,13 +79,18 @@ class DexScreenerAdapter(BaseAdapter):
 
         return list(by_pair.values())
 
-    def fetch_candles(self, pool_address: str, chain_id: Optional[str] = "solana") -> List[Candle]:
-        # GeckoTerminal uses 'eth' for 'ethereum'
+    def fetch_candles(self, pool_address: str, interval: str = "1m", limit: int = 100, chain_id: Optional[str] = "solana") -> List[Candle]:
+        # Mapping standard intervals to GeckoTerminal
+        # minute, hour, day
+        gt_interval = "minute"
+        if "h" in interval: gt_interval = "hour"
+        elif "d" in interval: gt_interval = "day"
+        
         gt_chain = "eth" if chain_id == "ethereum" else chain_id
-        url = f"{self.gecko_base}/networks/{gt_chain}/pools/{pool_address}/ohlcv/minute"
+        url = f"{self.gecko_base}/networks/{gt_chain}/pools/{pool_address}/ohlcv/{gt_interval}"
         try:
             import requests
-            resp = requests.get(url, params={"aggregate": 1, "limit": 100}, timeout=10)
+            resp = requests.get(url, params={"aggregate": 1, "limit": limit}, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             
@@ -134,10 +139,13 @@ class BinanceAdapter(BaseAdapter):
             print(f"Binance candidate fetch failed: {e}")
             return []
 
-    def fetch_candles(self, symbol: str, chain_id: Optional[str] = None) -> List[Candle]:
+    def fetch_candles(self, symbol: str, interval: str = "1m", limit: int = 100, chain_id: Optional[str] = None) -> List[Candle]:
         try:
             import requests
-            params = {"symbol": symbol, "interval": "1m", "limit": 100}
+            # Ensure interval is binance compatible
+            b_interval = interval
+            if interval == "1min": b_interval = "1m"
+            params = {"symbol": symbol, "interval": b_interval, "limit": limit}
             resp = requests.get(f"{self.base_url}/klines", params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
@@ -181,11 +189,17 @@ class StockAdapter(BaseAdapter):
             })
         return candidates
 
-    def fetch_candles(self, symbol: str, chain_id: Optional[str] = None) -> List[Candle]:
+    def fetch_candles(self, symbol: str, interval: str = "1d", limit: int = 100, chain_id: Optional[str] = None) -> List[Candle]:
         try:
             import yfinance as yf
+            # Map intervals for yfinance
+            yf_interval = interval
+            if interval == "1m": period = "2d"
+            elif interval == "1h": period = "10d"
+            else: period = "2y" # 1d or higher
+            
             ticker = yf.Ticker(symbol)
-            df = ticker.history(period="2d", interval="1m")
+            df = ticker.history(period=period, interval=yf_interval)
             if df.empty:
                 return []
             candles = []
@@ -198,7 +212,7 @@ class StockAdapter(BaseAdapter):
                     close=float(row["Close"]),
                     volume=float(row["Volume"])
                 ))
-            return candles[-100:]
+            return candles[-limit:]
         except Exception as e:
             print(f"Stock candle fetch failed for {symbol}: {e}")
             return []
@@ -230,7 +244,7 @@ class ParquetAdapter(BaseAdapter):
                     })
         return candidates
 
-    def fetch_candles(self, file_path: str, chain_id: Optional[str] = None) -> List[Candle]:
+    def fetch_candles(self, file_path: str, interval: str = "1m", limit: int = 100, chain_id: Optional[str] = None) -> List[Candle]:
         try:
             import pandas as pd
             df = pd.read_parquet(file_path)

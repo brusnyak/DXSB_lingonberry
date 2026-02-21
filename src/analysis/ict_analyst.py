@@ -16,13 +16,22 @@ class Candle:
 
 @dataclass
 class ICTPattern:
-    type: str  # "OB", "FVG", "BOS", "CHoCH", "Liquidity", "Trend", "Sweep"
+    type: str  # "OB", "FVG", "BOS", "CHoCH", "Liquidity", "Trend", "Sweep", "Investment"
     direction: str  # "BULLISH", "BEARISH", "NEUTRAL"
     price_range: tuple  # (low, high)
     strength: float
     context: str
     timestamp: int
     symbol: Optional[str] = None
+
+@dataclass
+class InvestmentResult:
+    symbol: str
+    score: float  # 0-100
+    discovery_type: str  # "Expansion", "Accumulation", "Momentum"
+    logic: str
+    target_potential: str
+    timestamp: int
 
 class ICTAnalyst:
     """Detects ICT patterns (BOS, CHoCH, Sweeps) with EMA trend filtering."""
@@ -361,7 +370,86 @@ class ICTAnalyst:
             )
         return None
 
+    def calculate_investment_score(self, candles: List[Candle], symbol: str, benchmark_candles: Optional[List[Candle]] = None) -> InvestmentResult:
+        """Ranks an asset for mid-term investment potential (The 'ENSO' Model)."""
+        if len(candles) < 50:
+            return InvestmentResult(symbol, 0, "None", "Insufficient data", "N/A", 0)
+
+        current = candles[-1].close
+        score = 50.0 # Base score
+        logic_details = []
+        discovery_type = "Accumulation"
+
+        # 1. Volatility Contraction (VPC) - Tightening range
+        # Compare ATR of last 10 vs last 30
+        atr_10 = sum(c.high - c.low for c in candles[-10:]) / 10
+        atr_30 = sum(c.high - c.low for c in candles[-30:]) / 30
+        vpc_ratio = atr_10 / atr_30 if atr_30 > 0 else 1.0
+        
+        if vpc_ratio < 0.8: # Tightening significantly
+            score += 15
+            logic_details.append(f"VPC Tightening ({vpc_ratio:.2f})")
+        elif vpc_ratio > 1.2: # Exploding or volatile
+            discovery_type = "Expansion"
+            score += 10
+            logic_details.append(f"VPC Expansion ({vpc_ratio:.2f})")
+
+        # 2. Relative Strength (RS)
+        if benchmark_candles and len(benchmark_candles) >= 30:
+            # Asset return over 30 candles
+            asset_ret = (candles[-1].close / candles[-30].close) - 1
+            bench_ret = (benchmark_candles[-1].close / benchmark_candles[-30].close) - 1
+            rs_alpha = asset_ret - bench_ret
+            
+            if rs_alpha > 0.05: # Outperforming by 5%+
+                score += 20
+                logic_details.append(f"RS Outperforming (+{rs_alpha*100:.1f}%)")
+            elif rs_alpha < -0.05:
+                score -= 10
+                logic_details.append(f"RS Underperforming ({rs_alpha*100:.1f}%)")
+
+        # 3. Structural Alignment (Macro)
+        # Check Daily BOS/CHoCH
+        patterns = self.analyze(candles)
+        bull_struct = [p for p in patterns if p.type in {"BOS", "CHoCH"} and p.direction == "BULLISH"]
+        if bull_struct:
+            score += 15
+            logic_details.append(f"Bullish Structure ({len(bull_struct)} breaks)")
+        
+        # 4. Trend Alignment (Daily EMA)
+        trend = [p for p in patterns if p.type == "Trend"]
+        if trend and trend[-1].direction == "BULLISH":
+            score += 10
+            logic_details.append("Bullish Daily Trend")
+        
+        # 5. Volume Surge
+        v_now = sum(c.volume for c in candles[-5:]) / 5
+        v_prev = sum(c.volume for c in candles[-30:-5]) / 25
+        vol_ratio = v_now / v_prev if v_prev > 0 else 1.0
+        if vol_ratio > 1.5:
+            score += 15
+            logic_details.append(f"Volume Surge ({vol_ratio:.1f}x)")
+
+        # Cap score
+        score = min(score, 100)
+        score = max(score, 0)
+
+        # Target Potential (Rough estimate based on recent range)
+        range_30d = max(c.high for c in candles[-30:]) - min(c.low for c in candles[-30:])
+        potential = (range_30d / current) * 100
+        target_str = f"~{potential:.1f}% Extension Potential"
+
+        return InvestmentResult(
+            symbol=symbol,
+            score=score,
+            discovery_type=discovery_type,
+            logic="; ".join(logic_details),
+            target_potential=target_str,
+            timestamp=candles[-1].timestamp
+        )
+
     def _find_liquidity(self, candles: List[Candle], pivots: List[Dict]) -> List[ICTPattern]:
+        # (This remains unchanged but including for file integrity in replace_file_content)
         threshold = 0.0005 
         patterns = []
         for i in range(len(pivots)):
