@@ -1,5 +1,6 @@
 import sqlite3
 import logging
+import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -29,19 +30,21 @@ class InvestmentJournal:
                 target_level REAL,
                 status TEXT DEFAULT 'ACTIVE', -- 'ACTIVE', 'INVALIDATED', 'TARGET_REACHED'
                 last_price REAL,
-                report_path TEXT
+                report_path TEXT,
+                extra_metadata TEXT -- JSON blob for learning
             )
         """)
         conn.commit()
         conn.close()
 
-    def add_thesis(self, symbol: str, score: float, d_type: str, logic: str, entry: str, invalidate: str, inv_level: float, target: str, target_level: float, report: str):
+    def add_thesis(self, symbol: str, score: float, d_type: str, logic: str, entry: str, invalidate: str, inv_level: float, target: str, target_level: float, report: str, extra_metadata: dict = None):
         ts_utc = datetime.now(timezone.utc).isoformat()
+        extra_json = json.dumps(extra_metadata) if extra_metadata else None
         conn = sqlite3.connect(self.db_path)
         conn.execute("""
-            INSERT INTO investments (ts_utc, symbol, score, discovery_type, logic, entry_zone, invalidation_level, inv_level, target_potential, target_level, report_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (ts_utc, symbol, score, d_type, logic, entry, invalidate, inv_level, target, target_level, report))
+            INSERT INTO investments (ts_utc, symbol, score, discovery_type, logic, entry_zone, invalidation_level, inv_level, target_potential, target_level, report_path, extra_metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (ts_utc, symbol, score, d_type, logic, entry, invalidate, inv_level, target, target_level, report, extra_json))
         conn.commit()
         conn.close()
         logger.info(f"💾 Thesis Saved: {symbol} (Score: {score:.1f})")

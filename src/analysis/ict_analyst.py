@@ -38,6 +38,7 @@ class InvestmentResult:
     inv_level: float
     timestamp: int
     url: Optional[str] = None
+    extra_metadata: Optional[Dict] = None # For learning/journaling
 
 class ICTAnalyst:
     """Detects ICT patterns (BOS, CHoCH, Sweeps) with EMA trend filtering."""
@@ -392,7 +393,8 @@ class ICTAnalyst:
                 symbol=symbol, score=0, discovery_type="None", 
                 logic="Insufficient data", target_potential="N/A", 
                 target_level=0.0, entry_zone="N/A", invalidation_level="N/A", 
-                inv_level=0.0, timestamp=int(time.time()), url=url
+                inv_level=0.0, timestamp=int(time.time()), url=url,
+                extra_metadata={}
             )
         
         current = candles[-1].close
@@ -526,7 +528,13 @@ class ICTAnalyst:
             invalidation_level=invalidation,
             inv_level=inv_level,
             timestamp=candles[-1].timestamp,
-            url=url
+            url=url,
+            extra_metadata={
+                "vpc_ratio": vpc_ratio,
+                "rs_alpha": rs_alpha if "rs_alpha" in locals() else 0.0,
+                "trend_orientation": trend[-1].direction if trend else "NEUTRAL",
+                "vol_ratio": vol_ratio
+            }
         )
 
     def _find_liquidity(self, candles: List[Candle], pivots: List[Dict]) -> List[ICTPattern]:

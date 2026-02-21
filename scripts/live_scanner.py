@@ -113,7 +113,8 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
                 journal.add_thesis(
                     symbol, res.score, mode, res.logic, 
                     res.entry_zone, res.invalidation_level, res.inv_level,
-                    res.target_potential, res.target_level, report_path
+                    res.target_potential, res.target_level, report_path,
+                    res.extra_metadata
                 )
                 alerter.send_discovery_alert(res)
 
@@ -139,7 +140,8 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
                 journal.add_thesis(
                     symbol, res.score, mode, res.logic, 
                     res.entry_zone, res.invalidation_level, res.inv_level,
-                    res.target_potential, res.target_level, report_path
+                    res.target_potential, res.target_level, report_path,
+                    res.extra_metadata
                 )
                 alerter.send_discovery_alert(res)
 
