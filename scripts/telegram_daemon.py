@@ -101,13 +101,25 @@ async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     journal = InvestmentJournal("dex_analytics.db")
-    active = len(journal.get_active_investments())
+    perf_journal = PerformanceJournal("dex_analytics.db")
     
-    # Simple stats fallback if PerformanceJournal is abstract or complex
+    active = len(journal.get_active_investments())
+    stats = perf_journal.get_stats()
+    
+    base_balance = 10000.0
+    growth_pct = stats.get("total_pnl_pct", 0.0)
+    current_balance = base_balance * (1 + (growth_pct / 100))
+    
     msg = (
-        "📊 *Performance Journal*\n\n"
-        f"Active Investments: {active}\n"
-        "Historical stats are tracked in `dex_analytics.db`!"
+        "📊 *Paper Trading Performance*\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"💼 *Simulated Balance:* `${current_balance:,.2f}`\n"
+        f"📈 *Net Growth:* `+{growth_pct:.2f}%`\n\n"
+        f"🎯 *Win Rate:* `{stats.get('win_rate', 0):.1f}%`\n"
+        f"✅ *Wins:* `{stats.get('wins', 0)}` | ❌ *Losses:* `{stats.get('losses', 0)}`\n"
+        f"⏱️ *Active Theses:* `{active}`\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "_(Starting theoretical balance: $10,000)_"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 

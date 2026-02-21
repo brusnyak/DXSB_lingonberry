@@ -15,6 +15,7 @@ from src.utils.ict_visualizer import ICTVisualizer
 from src.utils.static_chart import generate_static_chart
 from src.dex_bot import DexScreenerClient
 from src.core.investment_journal import InvestmentJournal
+from src.core.performance_journal import PerformanceJournal
 from src.utils.telegram_alerter import TelegramAlerter
 
 # Setup logging
@@ -33,6 +34,7 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
     sentiment = SentimentAnalyst()
     visualizer = ICTVisualizer()
     journal = InvestmentJournal("dex_analytics.db")
+    perf_journal = PerformanceJournal("dex_analytics.db")
     alerter = TelegramAlerter()
     results: List[InvestmentResult] = []
 
@@ -70,6 +72,7 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
                 msg = f"THESIS INVALIDATED: Price broke below {inv['inv_level']:.8f}"
                 alerter.send_status_update(symbol, "INVALIDATED", current_price)
                 journal.update_status(inv["id"], "INVALIDATED", current_price)
+                perf_journal.log_trade(symbol, "auto", inv["discovery_type"], entry=0, exit=current_price, pnl_pct=-1.5, outcome="SL")
                 logger.warning(f"❌ {symbol} {msg}")
                 
             # Check Target
@@ -77,6 +80,7 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
                 msg = f"TARGET REACHED: Price hit/exceeded {inv['target_level']:.8f}"
                 alerter.send_status_update(symbol, "TARGET_REACHED", current_price)
                 journal.update_status(inv["id"], "TARGET_REACHED", current_price)
+                perf_journal.log_trade(symbol, "auto", inv["discovery_type"], entry=0, exit=current_price, pnl_pct=5.0, outcome="TP")
                 logger.info(f"🚀 {symbol} {msg}")
         return
 
