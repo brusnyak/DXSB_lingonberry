@@ -102,7 +102,7 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
             chain = item.get("chainId")
             
             logger.info(f"[{i+1}/{scan_limit}] Evaluating {symbol}...")
-            time.sleep(0.5) 
+            time.sleep(1.5) # Increased to avoid 429 Too Many Requests
             
             candles = dex.fetch_candles(address, interval="day", limit=100, chain_id=chain)
             if not candles: continue
