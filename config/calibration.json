@@ -1,0 +1,6 @@
+{
+    "regime_bonuses": {
+        "MOMENTUM": 10.0,
+        "QUIET": -15.0
+    }
+}

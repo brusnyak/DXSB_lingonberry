@@ -1,6 +1,8 @@
 import logging
 import time
 import math
+import os
+import json
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 
@@ -45,6 +47,17 @@ class ICTAnalyst:
     
     def __init__(self, sensitivity: float = 1.0):
         self.sensitivity = sensitivity
+        self.calibration = self._load_calibration()
+
+    def _load_calibration(self) -> Dict:
+        path = "config/calibration.json"
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load calibration: {e}")
+        return {}
 
     def analyze(self, candles: List[Candle]) -> List[ICTPattern]:
         if len(candles) < 50:
@@ -97,6 +110,37 @@ class ICTAnalyst:
             patterns.append(confluence)
         
         return patterns
+
+    def _classify_regime(self, candles: List[Candle]) -> str:
+        """Classifies market state: QUIET, MOMENTUM, VOLATILE, BEARISH."""
+        if len(candles) < 50: return "QUIET"
+        
+        # 1. Bearish Filter (EMA 200)
+        ema200 = self._calculate_ema(candles, 200)
+        current = candles[-1].close
+        if ema200 and current < ema200[-1]:
+            return "BEARISH"
+            
+        # 2. Volatility Check (ATR Ratio)
+        atr_10 = sum(c.high - c.low for c in candles[-10:]) / 10
+        atr_30 = sum(c.high - c.low for c in candles[-30:]) / 30
+        vpc_ratio = atr_10 / atr_30 if atr_30 > 0 else 1.0
+        
+        # 3. Trend Intensity (EMA 50 Slope)
+        ema50 = self._calculate_ema(candles, 50)
+        if len(ema50) >= 10:
+            slope = (ema50[-1] - ema50[-10]) / ema50[-10]
+        else:
+            slope = 0.0
+            
+        if vpc_ratio > 1.3:
+            return "VOLATILE"
+        if slope > 0.005: 
+            return "MOMENTUM"
+        if vpc_ratio < 0.85:
+            return "QUIET"
+            
+        return "NORMAL"
 
     def _calculate_ema(self, candles: List[Candle], period: int) -> List[float]:
         if len(candles) < period:
@@ -400,44 +444,54 @@ class ICTAnalyst:
         current = candles[-1].close
         score = 50.0 # Base score
         logic_details = []
-        discovery_type = "Accumulation"
-        target_level = current * 1.4 # Default 40% target
-        inv_level = current * 0.9
-
-        # 1. Volatility Contraction (VPC) - Tightening range
-        # Compare ATR of last 10 vs last 30
+        
+        # Phase 14: Market Regime Detection
+        regime = self._classify_regime(candles)
+        logic_details.append(f"Regime: {regime}")
+        
+        # Phase 15: Adaptive Calibration
+        regime_bonus = self.calibration.get("regime_bonuses", {}).get(regime, 0.0)
+        score += regime_bonus
+        if regime_bonus != 0:
+            logic_details.append(f"Calibration Bias: {regime_bonus:+.1f}")
+        
+        # 1. Volatility Contraction (VPC)
         atr_10 = sum(c.high - c.low for c in candles[-10:]) / 10
         atr_30 = sum(c.high - c.low for c in candles[-30:]) / 30
         vpc_ratio = atr_10 / atr_30 if atr_30 > 0 else 1.0
         
-        if vpc_ratio < 0.8: # Tightening significantly
-            score += 15
+        # Weights change based on regime
+        w_vpc = 20 if regime == "QUIET" else 10
+        w_rs = 25 if regime == "MOMENTUM" else 15
+        w_struct = 15
+        w_value = 25 if regime in ["QUIET", "BEARISH"] else 15
+
+        if vpc_ratio < 0.8:
+            score += w_vpc
             logic_details.append(f"VPC Tightening ({vpc_ratio:.2f})")
-        elif vpc_ratio > 1.2: # Exploding or volatile
-            discovery_type = "Expansion"
+        elif vpc_ratio > 1.2:
             score += 10
             logic_details.append(f"VPC Expansion ({vpc_ratio:.2f})")
 
         # 2. Relative Strength (RS)
+        rs_alpha = 0.0
         if benchmark_candles and len(benchmark_candles) >= 30:
-            # Asset return over 30 candles
             asset_ret = (candles[-1].close / candles[-30].close) - 1
             bench_ret = (benchmark_candles[-1].close / benchmark_candles[-30].close) - 1
             rs_alpha = asset_ret - bench_ret
             
-            if rs_alpha > 0.05: # Outperforming by 5%+
-                score += 20
+            if rs_alpha > 0.05:
+                score += w_rs
                 logic_details.append(f"RS Outperforming (+{rs_alpha*100:.1f}%)")
             elif rs_alpha < -0.05:
-                score -= 10
+                score -= 15
                 logic_details.append(f"RS Underperforming ({rs_alpha*100:.1f}%)")
 
         # 3. Structural Alignment (Macro)
-        # Check Daily BOS/CHoCH
         patterns = self.analyze(candles)
         bull_struct = [p for p in patterns if p.type in {"BOS", "CHoCH"} and p.direction == "BULLISH"]
         if bull_struct:
-            score += 15
+            score += w_struct
             logic_details.append(f"Bullish Structure ({len(bull_struct)} breaks)")
         
         # 4. Trend Alignment (Daily EMA)
@@ -454,23 +508,19 @@ class ICTAnalyst:
             score += 15
             logic_details.append(f"Volume Surge ({vol_ratio:.1f}x)")
 
-        # 6. Value Discovery (Demand Zones & Sweeps) - CRITICAL for Resilience
-        # This addresses why we miss stock bottoms
+        # 6. Value Discovery (Demand Zones & Sweeps)
         obs = [p for p in patterns if p.type == "OB" and p.direction == "BULLISH"]
         sweeps = [p for p in patterns if p.type == "Sweep" and p.direction == "BULLISH"]
         
-        # Check proximity to recent Bullish OB (within last 50 candles)
         proximity_bonus = 0
         for ob in obs:
             ob_low, ob_high = ob.price_range
-            # If price is inside or within 1% of the OB
             if (current >= ob_low * 0.99) and (current <= ob_high * 1.05):
-                proximity_bonus = max(proximity_bonus, 20)
+                proximity_bonus = max(proximity_bonus, w_value)
                 logic_details.append("📌 Testing Structural Demand Zone")
                 break
         score += proximity_bonus
 
-        # Check for recent SSL Sweep (within last 15 candles)
         recent_ts = candles[-15].timestamp
         recent_sweep = any(s for s in sweeps if s.timestamp >= recent_ts)
         if recent_sweep:
@@ -482,6 +532,13 @@ class ICTAnalyst:
         if pd and "Discount" in pd.context:
             score += 10
             logic_details.append("🏷️ Institutional Discount Zone")
+        
+        # 8. Bearish Filter Penalty
+        if regime == "BEARISH":
+            score *= 0.7 # Significant penalty for being in a macro downtrend
+            logic_details.append("⚠️ Macro Bearish Regime: High Invalidation Risk")
+
+        discovery_type = "Accumulation" if vpc_ratio < 1.0 else "Expansion"
 
         # Cap score
         score = min(score, 100)
@@ -533,7 +590,8 @@ class ICTAnalyst:
                 "vpc_ratio": vpc_ratio,
                 "rs_alpha": rs_alpha if "rs_alpha" in locals() else 0.0,
                 "trend_orientation": trend[-1].direction if trend else "NEUTRAL",
-                "vol_ratio": vol_ratio
+                "vol_ratio": vol_ratio,
+                "market_regime": regime
             }
         )
 
