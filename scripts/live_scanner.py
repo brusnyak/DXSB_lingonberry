@@ -12,6 +12,7 @@ from src.adapters.market_adapters import DexScreenerAdapter, BinanceAdapter, Sto
 from src.analysis.ict_analyst import ICTAnalyst, InvestmentResult
 from src.analysis.sentiment_analyst import SentimentAnalyst
 from src.utils.ict_visualizer import ICTVisualizer
+from src.utils.static_chart import generate_static_chart
 from src.dex_bot import DexScreenerClient
 from src.core.investment_journal import InvestmentJournal
 from src.utils.telegram_alerter import TelegramAlerter
@@ -111,8 +112,11 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
             if res.score > 70: 
                 results.append(res)
                 report_path = f"data/reports/invest_{symbol}.html"
+                report_png = f"data/reports/invest_{symbol}.png"
                 patterns = analyst.analyze(candles)
+                
                 visualizer.generate_report(candles, patterns, symbol, "dex", report_path, investment_result=res)
+                generate_static_chart(candles, symbol, output_path=report_png)
                 
                 # Alert & Journal
                 journal.add_thesis(
@@ -121,7 +125,7 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
                     res.target_potential, res.target_level, report_path,
                     res.extra_metadata
                 )
-                alerter.send_discovery_alert(res)
+                alerter.send_discovery_alert(res, image_path=report_png)
 
     elif mode == "stocks":
         stock_adapter = StockAdapter(config)
@@ -145,8 +149,11 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
             if res.score > 65:
                 results.append(res)
                 report_path = f"data/reports/invest_{symbol}.html"
+                report_png = f"data/reports/invest_{symbol}.png"
                 patterns = analyst.analyze(candles)
+                
                 visualizer.generate_report(candles, patterns, symbol, "stock", report_path, investment_result=res)
+                generate_static_chart(candles, symbol, output_path=report_png)
                 
                 # Alert & Journal
                 journal.add_thesis(
@@ -155,7 +162,7 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
                     res.target_potential, res.target_level, report_path,
                     res.extra_metadata
                 )
-                alerter.send_discovery_alert(res)
+                alerter.send_discovery_alert(res, image_path=report_png)
 
     # 3. Present Results (CLI)
     results.sort(key=lambda x: x.score, reverse=True)

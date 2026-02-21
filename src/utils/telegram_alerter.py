@@ -12,9 +12,9 @@ class TelegramAlerter:
     def __init__(self):
         self.token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
-        self.api_url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        self.api_base = f"https://api.telegram.org/bot{self.token}"
 
-    def send_discovery_alert(self, r):
+    def send_discovery_alert(self, r, image_path: str = None):
         """
         Sends a high-conviction discovery alert.
         r: InvestmentResult object
@@ -39,13 +39,36 @@ class TelegramAlerter:
         )
 
         try:
-            payload = {
-                "chat_id": self.chat_id,
-                "text": message,
-                "parse_mode": "Markdown",
-                "disable_web_page_preview": False
+            # Prepare Inline Keyboard Buttons (Solbix Style)
+            dex_url = f"https://dexscreener.com/search?q={r.symbol}"
+            tv_url = f"https://www.tradingview.com/chart/?symbol={r.symbol}"
+            # Specific DEX URL if known (mocked BullX/Trojan style)
+            if r.discovery_type == "crypto":
+                buylink = f"https://bullx.io/terminal?chainId=solana&address={r.symbol}"
+            else:
+                buylink = f"https://finance.yahoo.com/quote/{r.symbol}"
+
+            keyboard = {
+                "inline_keyboard": [[
+                    {"text": "📊 TradingView", "url": tv_url},
+                    {"text": "🦅 DexScreener" if r.discovery_type == "crypto" else "📈 Yahoo Finance", "url": dex_url if r.discovery_type == "crypto" else buylink},
+                ], [
+                    {"text": "⚡ Trade on BullX" if r.discovery_type == "crypto" else "🏦 Broker", "url": buylink}
+                ]]
             }
-            resp = requests.post(self.api_url, json=payload, timeout=10)
+
+            if image_path and os.path.exists(image_path):
+                # Send Photo with Caption
+                url = f"{self.api_base}/sendPhoto"
+                payload = {"chat_id": self.chat_id, "caption": message, "parse_mode": "Markdown", "reply_markup": json.dumps(keyboard)}
+                with open(image_path, "rb") as photo:
+                    resp = requests.post(url, data=payload, files={"photo": photo}, timeout=15)
+            else:
+                # Fallback to standard Text Message
+                url = f"{self.api_base}/sendMessage"
+                payload = {"chat_id": self.chat_id, "text": message, "parse_mode": "Markdown", "disable_web_page_preview": False, "reply_markup": json.dumps(keyboard)}
+                resp = requests.post(url, json=payload, timeout=10)
+
             resp.raise_for_status()
             logger.info(f"Telegram Alert Sent: {r.symbol}")
         except Exception as e:
@@ -60,7 +83,8 @@ class TelegramAlerter:
             f"Current Price: `{price:.8f}`"
         )
         try:
+            url = f"{self.api_base}/sendMessage"
             payload = {"chat_id": self.chat_id, "text": message, "parse_mode": "Markdown"}
-            requests.post(self.api_url, json=payload, timeout=10)
+            requests.post(url, json=payload, timeout=10)
         except Exception as e:
             logger.error(f"Failed to send status update: {e}")
