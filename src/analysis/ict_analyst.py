@@ -235,28 +235,37 @@ class ICTAnalyst:
         return fvgs
 
     def _find_order_blocks(self, candles: List[Candle]) -> List[ICTPattern]:
+        """Detects Order Blocks (OB) - the last candle before a significant displacement."""
         obs = []
+        # We look for a "Body Displacement" > 2x average body over last 20
+        avg_body = sum(abs(c.close - c.open) for c in candles[-20:]) / 20
+        
         for i in range(1, len(candles) - 1):
+            # Bullish OB (Down candle before Up move)
             if candles[i].close < candles[i].open:
-                displacement = candles[i+1].close - candles[i].high
-                if displacement > (candles[i].high - candles[i].low) * 1.5:
-                    mitigated = any(c.low < candles[i].low for c in candles[i+2:])
+                expansion = candles[i+1].close - candles[i+1].open
+                if expansion > avg_body * 2.0:
+                    # check for mitigation within 30 candles
+                    future = candles[i+2 : i+32]
+                    mitigated = any(c.low < candles[i].low for c in future)
                     if not mitigated:
                         obs.append(ICTPattern(
                             type="OB", direction="BULLISH",
                             price_range=(candles[i].low, candles[i].high),
-                            strength=2.0, context="Unmitigated Bullish OB",
+                            strength=3.0, context="Structural Bullish OB (Demand)",
                             timestamp=candles[i].timestamp
                         ))
+            # Bearish OB (Up candle before Down move)
             elif candles[i].close > candles[i].open:
-                displacement = candles[i].low - candles[i+1].close
-                if displacement > (candles[i].high - candles[i].low) * 1.5:
-                    mitigated = any(c.high > candles[i].high for c in candles[i+2:])
+                expansion = candles[i+1].open - candles[i+1].close
+                if expansion > avg_body * 2.0:
+                    future = candles[i+2 : i+32]
+                    mitigated = any(c.high > candles[i].high for c in future)
                     if not mitigated:
                         obs.append(ICTPattern(
                             type="OB", direction="BEARISH",
                             price_range=(candles[i].low, candles[i].high),
-                            strength=2.0, context="Unmitigated Bearish OB",
+                            strength=3.0, context="Structural Bearish OB (Supply)",
                             timestamp=candles[i].timestamp
                         ))
         return obs
@@ -441,6 +450,35 @@ class ICTAnalyst:
         if vol_ratio > 1.5:
             score += 15
             logic_details.append(f"Volume Surge ({vol_ratio:.1f}x)")
+
+        # 6. Value Discovery (Demand Zones & Sweeps) - CRITICAL for Resilience
+        # This addresses why we miss stock bottoms
+        obs = [p for p in patterns if p.type == "OB" and p.direction == "BULLISH"]
+        sweeps = [p for p in patterns if p.type == "Sweep" and p.direction == "BULLISH"]
+        
+        # Check proximity to recent Bullish OB (within last 50 candles)
+        proximity_bonus = 0
+        for ob in obs:
+            ob_low, ob_high = ob.price_range
+            # If price is inside or within 1% of the OB
+            if (current >= ob_low * 0.99) and (current <= ob_high * 1.05):
+                proximity_bonus = max(proximity_bonus, 20)
+                logic_details.append("📌 Testing Structural Demand Zone")
+                break
+        score += proximity_bonus
+
+        # Check for recent SSL Sweep (within last 15 candles)
+        recent_ts = candles[-15].timestamp
+        recent_sweep = any(s for s in sweeps if s.timestamp >= recent_ts)
+        if recent_sweep:
+            score += 15
+            logic_details.append("🛡️ Sell-Side Liquidity Swept")
+
+        # 7. PD Discount Logic
+        pd = self._get_pd_zone(candles)
+        if pd and "Discount" in pd.context:
+            score += 10
+            logic_details.append("🏷️ Institutional Discount Zone")
 
         # Cap score
         score = min(score, 100)
