@@ -1,4 +1,5 @@
 import logging
+import time
 import math
 from typing import List, Dict, Optional
 from dataclasses import dataclass
@@ -31,6 +32,10 @@ class InvestmentResult:
     discovery_type: str  # "Expansion", "Accumulation", "Momentum"
     logic: str
     target_potential: str
+    target_level: float
+    entry_zone: str  # OTE zone
+    invalidation_level: str
+    inv_level: float
     timestamp: int
 
 class ICTAnalyst:
@@ -373,12 +378,19 @@ class ICTAnalyst:
     def calculate_investment_score(self, candles: List[Candle], symbol: str, benchmark_candles: Optional[List[Candle]] = None) -> InvestmentResult:
         """Ranks an asset for mid-term investment potential (The 'ENSO' Model)."""
         if len(candles) < 50:
-            return InvestmentResult(symbol, 0, "None", "Insufficient data", "N/A", 0)
-
+            return InvestmentResult(
+                symbol=symbol, score=0, discovery_type="None", 
+                logic="Insufficient data", target_potential="N/A", 
+                target_level=0.0, entry_zone="N/A", invalidation_level="N/A", 
+                inv_level=0.0, timestamp=int(time.time())
+            )
+        
         current = candles[-1].close
         score = 50.0 # Base score
         logic_details = []
         discovery_type = "Accumulation"
+        target_level = current * 1.4 # Default 40% target
+        inv_level = current * 0.9
 
         # 1. Volatility Contraction (VPC) - Tightening range
         # Compare ATR of last 10 vs last 30
@@ -434,6 +446,31 @@ class ICTAnalyst:
         score = min(score, 100)
         score = max(score, 0)
 
+        # 6. Entry Optimization (OTE - Optimal Trade Entry)
+        # We look for a recent expansion leg to retrace into
+        entry_zone = "Market Entry (Wait for Pullback)"
+        invalidation = "Below Recent Structure"
+        
+        # Simple Fibonacci OTE logic (D1/H4)
+        # Find highest high and lowest low in the last 50 candles
+        h_50 = max(c.high for c in candles[-50:])
+        l_50 = min(c.low for c in candles[-50:])
+        f_range = h_50 - l_50
+        
+        if f_range > 0:
+            ote_high = h_50 - (f_range * 0.62)
+            ote_low = h_50 - (f_range * 0.79)
+            ote_sweet = h_50 - (f_range * 0.705)
+            inv_level = l_50
+            target_level = h_50 + (f_range * 1.0) # Simple target: 1:1 extension
+            
+            if current > ote_high: # Price is still high, wait for OTE
+                entry_zone = f"OTE Zone: {ote_low:.8f} - {ote_high:.8f} (Sweet: {ote_sweet:.8f})"
+                invalidation = f"Below {l_50:.8f}"
+            else: # Price is already in or below OTE
+                entry_zone = f"Direct Buy (Inside Deep OTE) @ {current:.8f}"
+                invalidation = f"Below {l_50:.8f}"
+
         # Target Potential (Rough estimate based on recent range)
         range_30d = max(c.high for c in candles[-30:]) - min(c.low for c in candles[-30:])
         potential = (range_30d / current) * 100
@@ -445,6 +482,10 @@ class ICTAnalyst:
             discovery_type=discovery_type,
             logic="; ".join(logic_details),
             target_potential=target_str,
+            target_level=target_level,
+            entry_zone=entry_zone,
+            invalidation_level=invalidation,
+            inv_level=inv_level,
             timestamp=candles[-1].timestamp
         )
 
