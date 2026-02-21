@@ -430,7 +430,7 @@ class ICTAnalyst:
             )
         return None
 
-    def calculate_investment_score(self, candles: List[Candle], symbol: str, benchmark_candles: Optional[List[Candle]] = None, url: Optional[str] = None) -> InvestmentResult:
+    def calculate_investment_score(self, candles: List[Candle], symbol: str, benchmark_candles: Optional[List[Candle]] = None, sector_candles: Optional[List[Candle]] = None, sentiment_bonus: float = 0.0, url: Optional[str] = None) -> InvestmentResult:
         """Ranks an asset for mid-term investment potential (The 'ENSO' Model)."""
         if len(candles) < 50:
             return InvestmentResult(
@@ -444,6 +444,11 @@ class ICTAnalyst:
         current = candles[-1].close
         score = 50.0 # Base score
         logic_details = []
+        
+        # Phase 16: External Sentiment Overlay
+        if sentiment_bonus != 0:
+            score += sentiment_bonus
+            logic_details.append(f"Sentiment Bias: {sentiment_bonus:+.1f}")
         
         # Phase 14: Market Regime Detection
         regime = self._classify_regime(candles)
@@ -486,6 +491,20 @@ class ICTAnalyst:
             elif rs_alpha < -0.05:
                 score -= 15
                 logic_details.append(f"RS Underperforming ({rs_alpha*100:.1f}%)")
+
+        # 2b. Sector Alpha (Phase 16)
+        sector_alpha = 0.0
+        if sector_candles and len(sector_candles) >= 30:
+            asset_ret = (candles[-1].close / candles[-30].close) - 1
+            sector_ret = (sector_candles[-1].close / sector_candles[-30].close) - 1
+            sector_alpha = asset_ret - sector_ret
+            
+            if sector_alpha > 0.03: # Outperforming sector by 3%+
+                score += 15
+                logic_details.append(f"🚀 Sector Leader (+{sector_alpha*100:.1f}%)")
+            elif sector_alpha < -0.03:
+                score -= 10
+                logic_details.append(f"🐢 Sector Laggard ({sector_alpha*100:.1f}%)")
 
         # 3. Structural Alignment (Macro)
         patterns = self.analyze(candles)
@@ -589,6 +608,8 @@ class ICTAnalyst:
             extra_metadata={
                 "vpc_ratio": vpc_ratio,
                 "rs_alpha": rs_alpha if "rs_alpha" in locals() else 0.0,
+                "sector_alpha": sector_alpha if "sector_alpha" in locals() else 0.0,
+                "market_sentiment": sentiment_bonus,
                 "trend_orientation": trend[-1].direction if trend else "NEUTRAL",
                 "vol_ratio": vol_ratio,
                 "market_regime": regime

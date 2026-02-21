@@ -10,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.adapters.market_adapters import DexScreenerAdapter, BinanceAdapter, StockAdapter
 from src.analysis.ict_analyst import ICTAnalyst, InvestmentResult
+from src.analysis.sentiment_analyst import SentimentAnalyst
 from src.utils.ict_visualizer import ICTVisualizer
 from src.dex_bot import DexScreenerClient
 from src.core.investment_journal import InvestmentJournal
@@ -28,10 +29,14 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
         config = json.load(f)
         
     analyst = ICTAnalyst()
+    sentiment = SentimentAnalyst()
     visualizer = ICTVisualizer()
     journal = InvestmentJournal("dex_analytics.db")
     alerter = TelegramAlerter()
     results: List[InvestmentResult] = []
+
+    # Phase 16: External Sentiment
+    sentiment_bonus = sentiment.get_contrarian_bonus(mode)
 
     # 0. Monitoring Mode
     if monitor:
@@ -102,7 +107,7 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
             if not candles: continue
             
             url = f"https://dexscreener.com/{chain}/{address}"
-            res = analyst.calculate_investment_score(candles, symbol, benchmark_candles, url=url)
+            res = analyst.calculate_investment_score(candles, symbol, benchmark_candles, sentiment_bonus=sentiment_bonus, url=url)
             if res.score > 70: 
                 results.append(res)
                 report_path = f"data/reports/invest_{symbol}.html"
@@ -123,13 +128,20 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
         stock_list = config.get("stock_watchlist", ["TSLA", "NVDA", "AAPL", "PLTR", "SOFI", "AMD", "GME", "AMC"])
         logger.info(f"📡 Scanning major stocks: {stock_list}")
         
+        # S&P 500 Benchmark (Phase 16)
+        benchmark_candles = stock_adapter.fetch_candles("SPY", interval="1d", limit=100)
+        
         for symbol in stock_list:
             logger.info(f"Evaluating {symbol}...")
             candles = stock_adapter.fetch_candles(symbol, interval="1d")
             if not candles: continue
             
+            # Sector Benchmarking (Phase 16)
+            sector_etf = stock_adapter.get_sector_etf(symbol)
+            sector_candles = stock_adapter.fetch_candles(sector_etf, interval="1d")
+            
             url = f"https://www.tradingview.com/chart/?symbol={symbol}"
-            res = analyst.calculate_investment_score(candles, symbol, url=url)
+            res = analyst.calculate_investment_score(candles, symbol, benchmark_candles, sector_candles=sector_candles, sentiment_bonus=sentiment_bonus, url=url)
             if res.score > 65:
                 results.append(res)
                 report_path = f"data/reports/invest_{symbol}.html"

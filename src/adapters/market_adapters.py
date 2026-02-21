@@ -177,6 +177,17 @@ class StockAdapter(BaseAdapter):
     def __init__(self, config: Dict):
         self.config = config
 
+    def get_sector_etf(self, symbol: str) -> str:
+        """Maps a stock symbol to its sector ETF."""
+        mapping = {
+            "NVDA": "SMH", "AMD": "SMH", "INTC": "SMH", "MU": "SMH", "TSM": "SMH",
+            "AAPL": "XLK", "MSFT": "XLK", "GOOGL": "XLK", "META": "XLK", "AMZN": "XLY",
+            "TSLA": "XLY", "NFLX": "XLY", "JPM": "XLF", "BAC": "XLF", "WFC": "XLF",
+            "XOM": "XLE", "CVX": "XLE", "UNH": "XLV", "LLY": "XLV", "PFE": "XLV",
+            "BTC-USD": "BTC-USD", "GC=F": "GLD"
+        }
+        return mapping.get(symbol.upper(), "SPY")
+
     def fetch_candidates(self) -> List[Dict]:
         watchlist = self.config.get("stock_watchlist", ["AAPL", "TSLA", "NVDA", "BTC-USD", "GC=F"])
         candidates = []
@@ -185,7 +196,8 @@ class StockAdapter(BaseAdapter):
                 "chainId": "stock",
                 "pairAddress": symbol,
                 "baseToken": {"symbol": symbol, "address": symbol},
-                "priceUsd": 0.0
+                "priceUsd": 0.0,
+                "sector": self.get_sector_etf(symbol)
             })
         return candidates
 
