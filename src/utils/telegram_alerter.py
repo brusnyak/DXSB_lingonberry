@@ -23,16 +23,19 @@ class TelegramAlerter:
             logger.warning("Telegram credentials missing in .env")
             return
 
-        emoji = "🟢" if r.score > 80 else "🟡"
+        emoji = "💎" if r.score >= 90 else "🟢"
+        chart_url = r.url or "https://tradingview.com"
+        
         message = (
-            f"{emoji} *STRATEGIC INVESTMENT DISCOVERY: {r.symbol}*\n\n"
-            f"🎯 *Score:* {r.score:.1f}/100\n"
-            f"🔍 *Type:* {r.discovery_type}\n"
-            f"🛠 *Logic:* {r.logic}\n\n"
-            f"💰 *Entry Zone:* `{r.entry_zone}`\n"
-            f"🛑 *Invalidation:* `{r.invalidation_level}`\n"
-            f"📈 *Target:* {r.target_potential}\n\n"
-            f"🔗 [View Detailed Brief](https://github.com/brusnyak/DXSB_lingonberry)" 
+            f"{emoji} *INVESTMENT ALERT: {r.symbol}*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🏆 *Score:* `{r.score:.1f}/100`\n"
+            f"🔭 *Logic:* _{r.logic}_\n"
+            f"📊 *Potential:* `{r.target_potential}`\n\n"
+            f"📥 *Entry Zone:* `{r.entry_zone}`\n"
+            f"🛡️ *Invalidation:* `{r.invalidation_level}`\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🔗 [VIEW LIVE CHART]({chart_url})"
         )
 
         try:

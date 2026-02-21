@@ -37,6 +37,7 @@ class InvestmentResult:
     invalidation_level: str
     inv_level: float
     timestamp: int
+    url: Optional[str] = None
 
 class ICTAnalyst:
     """Detects ICT patterns (BOS, CHoCH, Sweeps) with EMA trend filtering."""
@@ -384,14 +385,14 @@ class ICTAnalyst:
             )
         return None
 
-    def calculate_investment_score(self, candles: List[Candle], symbol: str, benchmark_candles: Optional[List[Candle]] = None) -> InvestmentResult:
+    def calculate_investment_score(self, candles: List[Candle], symbol: str, benchmark_candles: Optional[List[Candle]] = None, url: Optional[str] = None) -> InvestmentResult:
         """Ranks an asset for mid-term investment potential (The 'ENSO' Model)."""
         if len(candles) < 50:
             return InvestmentResult(
                 symbol=symbol, score=0, discovery_type="None", 
                 logic="Insufficient data", target_potential="N/A", 
                 target_level=0.0, entry_zone="N/A", invalidation_level="N/A", 
-                inv_level=0.0, timestamp=int(time.time())
+                inv_level=0.0, timestamp=int(time.time()), url=url
             )
         
         current = candles[-1].close
@@ -524,7 +525,8 @@ class ICTAnalyst:
             entry_zone=entry_zone,
             invalidation_level=invalidation,
             inv_level=inv_level,
-            timestamp=candles[-1].timestamp
+            timestamp=candles[-1].timestamp,
+            url=url
         )
 
     def _find_liquidity(self, candles: List[Candle], pivots: List[Dict]) -> List[ICTPattern]:

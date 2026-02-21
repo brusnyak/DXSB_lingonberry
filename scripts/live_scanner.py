@@ -101,7 +101,8 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
             candles = dex.fetch_candles(address, interval="day", limit=100, chain_id=chain)
             if not candles: continue
             
-            res = analyst.calculate_investment_score(candles, symbol, benchmark_candles)
+            url = f"https://dexscreener.com/{chain}/{address}"
+            res = analyst.calculate_investment_score(candles, symbol, benchmark_candles, url=url)
             if res.score > 70: 
                 results.append(res)
                 report_path = f"data/reports/invest_{symbol}.html"
@@ -126,7 +127,8 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
             candles = stock_adapter.fetch_candles(symbol, interval="1d")
             if not candles: continue
             
-            res = analyst.calculate_investment_score(candles, symbol)
+            url = f"https://www.tradingview.com/chart/?symbol={symbol}"
+            res = analyst.calculate_investment_score(candles, symbol, url=url)
             if res.score > 65:
                 results.append(res)
                 report_path = f"data/reports/invest_{symbol}.html"
