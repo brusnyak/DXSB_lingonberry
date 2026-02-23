@@ -92,10 +92,12 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
         logger.info("Fetched BTC Benchmark for Relative Strength analysis.")
 
     # 2. Market Scanning
+    active_symbols = [inv["symbol"] for inv in journal.get_active_investments()]
+    
     if mode == "crypto":
         client = DexScreenerClient()
         dex = DexScreenerAdapter(client, config)
-        logger.info("📡 Scanning DexScreener Trending for potential gems...")
+        logger.info(f"📡 Scanning DexScreener Trending for potential gems (skipping {len(active_symbols)} already active)...")
         candidates = dex.fetch_candidates()
         
         scan_limit = min(len(candidates), limit)
@@ -106,7 +108,12 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
             chain = item.get("chainId")
             
             logger.info(f"[{i+1}/{scan_limit}] Evaluating {symbol}...")
-            time.sleep(1.5) # Increased to avoid 429 Too Many Requests
+            
+            if symbol in active_symbols:
+                logger.info(f"Skipping {symbol} - Already an active investment in journal.")
+                continue
+                
+            time.sleep(3.0) # GeckoTerminal limit is 30/min (2.0s min). 3.0s is safe.
             
             candles = dex.fetch_candles(address, interval="day", limit=100, chain_id=chain)
             if not candles: continue
@@ -141,6 +148,11 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
         
         for symbol in stock_list:
             logger.info(f"Evaluating {symbol}...")
+            
+            if symbol in active_symbols:
+                logger.info(f"Skipping {symbol} - Already an active investment in journal.")
+                continue
+                
             candles = stock_adapter.fetch_candles(symbol, interval="1d")
             if not candles: continue
             
