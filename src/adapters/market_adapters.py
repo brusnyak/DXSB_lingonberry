@@ -77,7 +77,24 @@ class DexScreenerAdapter(BaseAdapter):
                     pass
 
 
-        return list(by_pair.values())
+        MIN_LIQUIDITY_USD = 50_000
+        MIN_VOLUME_24H_USD = 100_000
+        
+        qualified = []
+        for pair in by_pair.values():
+            liquidity = pair.get("liquidity", {}).get("usd", 0) or 0
+            volume_24h = pair.get("volume", {}).get("h24", 0) or 0
+            symbol = pair.get("baseToken", {}).get("symbol", "")
+            
+            # Quality guard: reject low liquidity/volume garbage meme coins
+            if liquidity < MIN_LIQUIDITY_USD or volume_24h < MIN_VOLUME_24H_USD:
+                continue
+            # Reject tokens without a recognizable symbol
+            if not symbol or len(symbol) > 15:
+                continue
+            qualified.append(pair)
+        
+        return qualified
 
     def fetch_candles(self, pool_address: str, interval: str = "1m", limit: int = 100, chain_id: Optional[str] = "solana") -> List[Candle]:
         # Mapping standard intervals to GeckoTerminal

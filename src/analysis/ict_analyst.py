@@ -595,7 +595,7 @@ class ICTAnalyst:
 
         return InvestmentResult(
             symbol=symbol,
-            score=score,
+            score=min(score, 95.0),  # Cap at 95 — only ML-validated setups should ever be 100
             discovery_type=discovery_type,
             logic="; ".join(logic_details),
             target_potential=target_str,

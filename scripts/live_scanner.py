@@ -120,23 +120,33 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
             
             url = f"https://dexscreener.com/{chain}/{address}"
             res = analyst.calculate_investment_score(candles, symbol, benchmark_candles, sentiment_bonus=sentiment_bonus, url=url)
-            if res.score > 70: 
-                results.append(res)
-                report_path = f"data/reports/invest_{symbol}.html"
-                report_png = f"data/reports/invest_{symbol}.png"
-                patterns = analyst.analyze(candles)
-                
-                visualizer.generate_report(candles, patterns, symbol, "dex", report_path, investment_result=res)
-                generate_static_chart(candles, symbol, output_path=report_png)
-                
-                # Alert & Journal
-                journal.add_thesis(
-                    symbol, res.score, mode, res.logic, 
-                    res.entry_zone, res.invalidation_level, res.inv_level,
-                    res.target_potential, res.target_level, report_path,
-                    res.extra_metadata
-                )
-                alerter.send_discovery_alert(res, image_path=report_png)
+            
+            # Quality filter: reject tokens with tiny target potential or low score
+            try:
+                target_pct = float(res.target_potential.split("~")[1].split("%")[0])
+            except (IndexError, ValueError):
+                target_pct = 0.0
+            if res.score <= 70 or target_pct < 5.0:
+                logger.info(f"Skipping {symbol} – Score: {res.score:.0f}, TP: {target_pct:.1f}%")
+                continue
+            
+            # High-conviction signal found!
+            res.discovery_type = "crypto"
+            results.append(res)
+            report_path = f"data/reports/invest_{symbol}.html"
+            report_png = f"data/reports/invest_{symbol}.png"
+            patterns = analyst.analyze(candles)
+            visualizer.generate_report(candles, patterns, symbol, "dex", report_path, investment_result=res)
+            generate_static_chart(candles, symbol, output_path=report_png)
+            
+            # Alert & Journal
+            journal.add_thesis(
+                symbol, res.score, "crypto", res.logic, 
+                res.entry_zone, res.invalidation_level, res.inv_level,
+                res.target_potential, res.target_level, report_path,
+                res.extra_metadata
+            )
+            alerter.send_discovery_alert(res, image_path=report_png)
 
     elif mode == "stocks":
         stock_adapter = StockAdapter(config)
@@ -162,23 +172,33 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
             
             url = f"https://www.tradingview.com/chart/?symbol={symbol}"
             res = analyst.calculate_investment_score(candles, symbol, benchmark_candles, sector_candles=sector_candles, sentiment_bonus=sentiment_bonus, url=url)
-            if res.score > 65:
-                results.append(res)
-                report_path = f"data/reports/invest_{symbol}.html"
-                report_png = f"data/reports/invest_{symbol}.png"
-                patterns = analyst.analyze(candles)
-                
-                visualizer.generate_report(candles, patterns, symbol, "stock", report_path, investment_result=res)
-                generate_static_chart(candles, symbol, output_path=report_png)
-                
-                # Alert & Journal
-                journal.add_thesis(
-                    symbol, res.score, mode, res.logic, 
-                    res.entry_zone, res.invalidation_level, res.inv_level,
-                    res.target_potential, res.target_level, report_path,
-                    res.extra_metadata
-                )
-                alerter.send_discovery_alert(res, image_path=report_png)
+            
+            # Quality filter: reject stocks with tiny target potential or low score
+            try:
+                target_pct = float(res.target_potential.split("~")[1].split("%")[0])
+            except (IndexError, ValueError):
+                target_pct = 0.0
+            if res.score <= 65 or target_pct < 5.0:
+                logger.info(f"Skipping {symbol} – Score: {res.score:.0f}, TP: {target_pct:.1f}%")
+                continue
+            
+            # High-conviction signal found!
+            res.discovery_type = "stocks"
+            results.append(res)
+            report_path = f"data/reports/invest_{symbol}.html"
+            report_png = f"data/reports/invest_{symbol}.png"
+            patterns = analyst.analyze(candles)
+            visualizer.generate_report(candles, patterns, symbol, "stock", report_path, investment_result=res)
+            generate_static_chart(candles, symbol, output_path=report_png)
+            
+            # Alert & Journal
+            journal.add_thesis(
+                symbol, res.score, "stocks", res.logic, 
+                res.entry_zone, res.invalidation_level, res.inv_level,
+                res.target_potential, res.target_level, report_path,
+                res.extra_metadata
+            )
+            alerter.send_discovery_alert(res, image_path=report_png)
 
     # 3. Present Results (CLI)
     results.sort(key=lambda x: x.score, reverse=True)

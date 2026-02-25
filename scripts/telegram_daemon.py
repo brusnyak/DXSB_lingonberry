@@ -123,6 +123,44 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+async def eod(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """End-of-Day summary of all investment signals from the past 24 hours."""
+    import sqlite3
+    from datetime import datetime, timezone, timedelta
+    
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    conn = sqlite3.connect("dex_analytics.db")
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT * FROM investments WHERE ts_utc >= ? ORDER BY score DESC",
+        (cutoff,)
+    ).fetchall()
+    conn.close()
+    
+    if not rows:
+        await update.message.reply_text("📋 No investment signals in the past 24h.")
+        return
+    
+    today_str = datetime.now().strftime('%d %b %Y')
+    lines = [f"*📅 EOD Summary — {today_str}*", "━━━━━━━━━━━━━━━━━━"]
+    for r in rows:
+        status_icon = "🚀" if r["status"] == "TARGET_REACHED" else "❌" if r["status"] == "INVALIDATED" else "⏳"
+        asset_icon = "🔗" if r["discovery_type"] == "crypto" else "📈"
+        entry_short = r["entry_zone"][:35] + "..." if len(r["entry_zone"]) > 35 else r["entry_zone"]
+        lines.append(
+            f"{status_icon} {asset_icon} *{r['symbol']}* — `{r['score']:.0f}/95` — _{r['status']}_\n"
+            f"   Entry: `{entry_short}`\n"
+            f"   Potential: `{r['target_potential']}`"
+        )
+    
+    perf = PerformanceJournal("dex_analytics.db").get_stats()
+    lines += [
+        "━━━━━━━━━━━━━━━━━━",
+        f"🏆 *Overall Stats* — W: `{perf.get('wins', 0)}` L: `{perf.get('losses', 0)}` | WR: `{perf.get('win_rate', 0):.0f}%`"
+    ]
+    
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -136,6 +174,7 @@ def main():
     application.add_handler(CommandHandler("scan", scan))
     application.add_handler(CommandHandler("monitor", monitor))
     application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("eod", eod))
 
     logger.info("Starting Telegram interactive daemon...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)

@@ -27,14 +27,25 @@ class TelegramAlerter:
         emoji = "💎" if r.score >= 90 else "🟢"
         chart_url = r.url or "https://tradingview.com"
         
+        # Differentiate Crypto vs Stock
+        if r.discovery_type == "crypto":
+            asset_type_header = "🔗 CRYPTO INVESTMENT SIGNAL"
+            score_bar = "🟩" * int(r.score / 10) + "⬜" * (10 - int(r.score / 10))
+        else:
+            asset_type_header = "📈 STOCK INVESTMENT SIGNAL"
+            score_bar = "🟦" * int(r.score / 10) + "⬜" * (10 - int(r.score / 10))
+        
         message = (
-            f"{emoji} *INVESTMENT ALERT: {r.symbol}*\n"
+            f"{emoji} *{asset_type_header}*\n"
+            f"*Asset:* `{r.symbol}`\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🏆 *Score:* `{r.score:.1f}/100`\n"
-            f"🔭 *Logic:* _{r.logic}_\n"
-            f"📊 *Potential:* `{r.target_potential}`\n\n"
-            f"📥 *Entry Zone:* `{r.entry_zone}`\n"
-            f"🛡️ *Invalidation:* `{r.invalidation_level}`\n"
+            f"🏆 *Score:* `{r.score:.0f}/95` {score_bar}\n"
+            f"🔭 *Logic:*\n_{r.logic}_\n\n"
+            f"📊 *Potential:* `{r.target_potential}`\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📥 *Entry:* `{r.entry_zone}`\n"
+            f"🛑 *Stop/Invalidation:* `{r.invalidation_level}`\n"
+            f"🎯 *Target:* `{r.target_potential}`\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"🔗 [VIEW LIVE CHART]({chart_url})"
         )
