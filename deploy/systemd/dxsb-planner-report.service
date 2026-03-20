@@ -1,0 +1,12 @@
+[Unit]
+Description=DXSB Planner Daily Telegram Report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/DXSB_lingonberry
+EnvironmentFile=/home/ubuntu/DXSB_lingonberry/.env
+Environment=SEND_REPORT=1
+ExecStart=/home/ubuntu/DXSB_lingonberry/scripts/planner_cycle.sh
