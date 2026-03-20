@@ -7,5 +7,4 @@ Wants=network-online.target
 Type=oneshot
 User=ubuntu
 WorkingDirectory=/home/ubuntu/DXSB_lingonberry
-EnvironmentFile=/home/ubuntu/DXSB_lingonberry/.env
 ExecStart=/home/ubuntu/DXSB_lingonberry/scripts/planner_cycle.sh
