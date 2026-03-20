@@ -26,6 +26,10 @@ class TelegramAlerter:
 
         emoji = "💎" if r.score >= 90 else "🟢"
         chart_url = r.url or "https://tradingview.com"
+        meta = r.extra_metadata or {}
+        chain_id = meta.get("chain_id", "solana")
+        pair_address = meta.get("pair_address")
+        token_address = meta.get("token_address", r.symbol)
         
         # Differentiate Crypto vs Stock
         if r.discovery_type == "crypto":
@@ -54,9 +58,11 @@ class TelegramAlerter:
             # Prepare Inline Keyboard Buttons (Solbix Style)
             dex_url = f"https://dexscreener.com/search?q={r.symbol}"
             tv_url = f"https://www.tradingview.com/chart/?symbol={r.symbol}"
+            if pair_address:
+                dex_url = f"https://dexscreener.com/{chain_id}/{pair_address}"
             # Specific DEX URL if known (mocked BullX/Trojan style)
             if r.discovery_type == "crypto":
-                buylink = f"https://bullx.io/terminal?chainId=solana&address={r.symbol}"
+                buylink = f"https://bullx.io/terminal?chainId={chain_id}&address={token_address}"
             else:
                 buylink = f"https://finance.yahoo.com/quote/{r.symbol}"
 

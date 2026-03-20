@@ -129,7 +129,8 @@ class ICTAnalyst:
         # 3. Trend Intensity (EMA 50 Slope)
         ema50 = self._calculate_ema(candles, 50)
         if len(ema50) >= 10:
-            slope = (ema50[-1] - ema50[-10]) / ema50[-10]
+            base = ema50[-10]
+            slope = ((ema50[-1] - base) / base) if base else 0.0
         else:
             slope = 0.0
             
@@ -154,6 +155,18 @@ class ICTAnalyst:
             val = (closes[i] * k) + (ema[-1] * (1 - k))
             ema.append(val)
         return ema
+
+    @staticmethod
+    def _safe_ratio(a: float, b: float, default: float = 0.0) -> float:
+        if b == 0:
+            return default
+        return a / b
+
+    @staticmethod
+    def _ret(current: float, previous: float) -> float:
+        if previous == 0:
+            return 0.0
+        return (current / previous) - 1
 
     def _find_pivots(self, candles: List[Candle], left_bars: int = 3, right_bars: int = 3) -> List[Dict]:
         pivots = []
@@ -481,8 +494,8 @@ class ICTAnalyst:
         # 2. Relative Strength (RS)
         rs_alpha = 0.0
         if benchmark_candles and len(benchmark_candles) >= 30:
-            asset_ret = (candles[-1].close / candles[-30].close) - 1
-            bench_ret = (benchmark_candles[-1].close / benchmark_candles[-30].close) - 1
+            asset_ret = self._ret(candles[-1].close, candles[-30].close)
+            bench_ret = self._ret(benchmark_candles[-1].close, benchmark_candles[-30].close)
             rs_alpha = asset_ret - bench_ret
             
             if rs_alpha > 0.05:
@@ -495,8 +508,8 @@ class ICTAnalyst:
         # 2b. Sector Alpha (Phase 16)
         sector_alpha = 0.0
         if sector_candles and len(sector_candles) >= 30:
-            asset_ret = (candles[-1].close / candles[-30].close) - 1
-            sector_ret = (sector_candles[-1].close / sector_candles[-30].close) - 1
+            asset_ret = self._ret(candles[-1].close, candles[-30].close)
+            sector_ret = self._ret(sector_candles[-1].close, sector_candles[-30].close)
             sector_alpha = asset_ret - sector_ret
             
             if sector_alpha > 0.03: # Outperforming sector by 3%+
@@ -526,6 +539,16 @@ class ICTAnalyst:
         if vol_ratio > 1.5:
             score += 15
             logic_details.append(f"Volume Surge ({vol_ratio:.1f}x)")
+
+        # 5b. Anti-Chase Filter (avoid signaling after major expansion is already extended)
+        recent_high_20 = max(c.high for c in candles[-20:])
+        dist_from_high_pct = ((recent_high_20 / current) - 1) * 100 if current > 0 else 0.0
+        ema20 = self._calculate_ema(candles, 20)
+        extension_above_ema20_pct = (((current / ema20[-1]) - 1) * 100) if ema20 else 0.0
+        overextended = (dist_from_high_pct < 2.0 and extension_above_ema20_pct > 8.0 and vol_ratio > 1.5)
+        if overextended:
+            score -= 18
+            logic_details.append("⚠️ Overextended After Expansion")
 
         # 6. Value Discovery (Demand Zones & Sweeps)
         obs = [p for p in patterns if p.type == "OB" and p.direction == "BULLISH"]
@@ -563,10 +586,18 @@ class ICTAnalyst:
         score = min(score, 100)
         score = max(score, 0)
 
-        # 6. Entry Optimization (OTE - Optimal Trade Entry)
+        # 9. Entry Optimization (OTE - Optimal Trade Entry)
         # We look for a recent expansion leg to retrace into
         entry_zone = "Market Entry (Wait for Pullback)"
         invalidation = "Below Recent Structure"
+        entry_state = "UNKNOWN"
+        entry_pullback_pct = 0.0
+        upside_to_target_pct = 0.0
+        ote_low = None
+        ote_high = None
+        ote_sweet = None
+        inv_level = min(c.low for c in candles[-20:])
+        target_level = current * 1.08
         
         # Simple Fibonacci OTE logic (D1/H4)
         # Find highest high and lowest low in the last 50 candles
@@ -580,18 +611,38 @@ class ICTAnalyst:
             ote_sweet = h_50 - (f_range * 0.705)
             inv_level = l_50
             target_level = h_50 + (f_range * 1.0) # Simple target: 1:1 extension
+            upside_to_target_pct = ((target_level / current) - 1) * 100 if current > 0 else 0.0
             
             if current > ote_high: # Price is still high, wait for OTE
                 entry_zone = f"OTE Zone: {ote_low:.8f} - {ote_high:.8f} (Sweet: {ote_sweet:.8f})"
                 invalidation = f"Below {l_50:.8f}"
+                entry_state = "WAIT_PULLBACK"
+                entry_pullback_pct = ((current / ote_high) - 1) * 100
             else: # Price is already in or below OTE
                 entry_zone = f"Direct Buy (Inside Deep OTE) @ {current:.8f}"
                 invalidation = f"Below {l_50:.8f}"
+                entry_state = "READY" if current >= ote_low * 0.98 else "EARLY_CATCH"
+
+        # Penalize non-actionable or late-stage setups to reduce low-quality alerts
+        if entry_state == "WAIT_PULLBACK":
+            score -= 10
+            logic_details.append(f"Entry Not Triggered Yet (+{entry_pullback_pct:.1f}% above OTE)")
+        elif entry_state == "EARLY_CATCH":
+            score -= 8
+            logic_details.append("Entry Too Deep Below OTE")
+
+        if upside_to_target_pct and upside_to_target_pct < 4.0:
+            score -= 12
+            logic_details.append(f"Low Runway ({upside_to_target_pct:.1f}% to target)")
 
         # Target Potential (Rough estimate based on recent range)
         range_30d = max(c.high for c in candles[-30:]) - min(c.low for c in candles[-30:])
-        potential = (range_30d / current) * 100
+        potential = (range_30d / current) * 100 if current else 0.0
         target_str = f"~{potential:.1f}% Extension Potential"
+
+        # Final cap/floor after late-entry penalties
+        score = min(score, 100)
+        score = max(score, 0)
 
         return InvestmentResult(
             symbol=symbol,
@@ -612,7 +663,15 @@ class ICTAnalyst:
                 "market_sentiment": sentiment_bonus,
                 "trend_orientation": trend[-1].direction if trend else "NEUTRAL",
                 "vol_ratio": vol_ratio,
-                "market_regime": regime
+                "market_regime": regime,
+                "entry_state": entry_state,
+                "entry_pullback_pct": entry_pullback_pct,
+                "upside_to_target_pct": upside_to_target_pct,
+                "overextended": overextended,
+                "ote_low": ote_low,
+                "ote_high": ote_high,
+                "ote_sweet": ote_sweet,
+                "signal_price": current
             }
         )
 
@@ -624,6 +683,8 @@ class ICTAnalyst:
             for j in range(i + 1, len(pivots)):
                 p1, p2 = pivots[i], pivots[j]
                 if p1["type"] == p2["type"]:
+                    if p1["price"] == 0:
+                        continue
                     diff = abs(p1["price"] - p2["price"]) / p1["price"]
                     if diff < threshold:
                         typ = "EQH" if p1["type"] == "HH" else "EQL"

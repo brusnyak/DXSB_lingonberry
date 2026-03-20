@@ -3,6 +3,7 @@ import sys
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 # Ensure project root is in sys.path
@@ -22,6 +23,29 @@ from src.utils.telegram_alerter import TelegramAlerter
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger("investment_scanner")
 
+
+def _parse_metadata(raw_meta) -> Dict:
+    if isinstance(raw_meta, dict):
+        return raw_meta
+    if isinstance(raw_meta, str) and raw_meta.strip():
+        try:
+            return json.loads(raw_meta)
+        except Exception:
+            return {}
+    return {}
+
+
+def _parse_entry_price_from_zone(entry_zone: str) -> Optional[float]:
+    if not isinstance(entry_zone, str):
+        return None
+    marker = "@"
+    if marker in entry_zone:
+        try:
+            return float(entry_zone.split(marker)[-1].strip())
+        except Exception:
+            return None
+    return None
+
 def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool = False):
     """
     Scans markets for mid-term investment opportunities (The 'Expansion' model).
@@ -30,11 +54,13 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
     with open("config.json", "r") as f:
         config = json.load(f)
         
+    db_path = config.get("database_path", "dex_analytics.db")
+
     analyst = ICTAnalyst()
     sentiment = SentimentAnalyst()
     visualizer = ICTVisualizer()
-    journal = InvestmentJournal("dex_analytics.db")
-    perf_journal = PerformanceJournal("dex_analytics.db")
+    journal = InvestmentJournal(db_path)
+    perf_journal = PerformanceJournal(db_path)
     alerter = TelegramAlerter()
     results: List[InvestmentResult] = []
 
@@ -47,19 +73,32 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
         active = journal.get_active_investments()
         binance = BinanceAdapter()
         stocks = StockAdapter(config)
+        dex_client = DexScreenerClient()
+        dex = DexScreenerAdapter(dex_client, config)
+        now_utc = datetime.now(timezone.utc)
+        max_hold_days = 14
         
         for inv in active:
             symbol = inv["symbol"]
             current_price = 0.0
+            metadata = _parse_metadata(inv.get("extra_metadata"))
+            entry_price = metadata.get("signal_price") or _parse_entry_price_from_zone(inv.get("entry_zone", ""))
+            signal_ts = inv.get("ts_utc")
             
             # Fetch current price based on discovery type
             if inv["discovery_type"] == "crypto":
-                # Try Binance first, then fallback
-                data = binance.get_market_data(f"{symbol}USDT")
-                current_price = data.get("priceUsd", 0)
+                # Prefer Dex pair price for DEX-native tokens; fallback to Binance if needed.
+                pair_address = metadata.get("pair_address")
+                chain_id = metadata.get("chain_id")
+                if pair_address and chain_id:
+                    data = dex.get_market_data(pair_address, chain_id=chain_id)
+                    current_price = float(data.get("priceUsd", 0) or 0)
+                if current_price == 0:
+                    data = binance.get_market_data(f"{symbol}USDT")
+                    current_price = float(data.get("priceUsd", 0) or 0)
             elif inv["discovery_type"] == "stocks":
                 data = stocks.get_market_data(symbol)
-                current_price = data.get("priceUsd", 0)
+                current_price = float(data.get("priceUsd", 0) or 0)
             
             if current_price == 0:
                 logger.warning(f"Could not fetch price for {symbol}")
@@ -72,7 +111,13 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
                 msg = f"THESIS INVALIDATED: Price broke below {inv['inv_level']:.8f}"
                 alerter.send_status_update(symbol, "INVALIDATED", current_price)
                 journal.update_status(inv["id"], "INVALIDATED", current_price)
-                perf_journal.log_trade(symbol, "auto", inv["discovery_type"], entry=0, exit=current_price, pnl_pct=-1.5, outcome="SL")
+                if entry_price and entry_price > 0:
+                    pnl_pct = ((current_price / float(entry_price)) - 1) * 100
+                    entry_for_log = float(entry_price)
+                else:
+                    pnl_pct = -1.5
+                    entry_for_log = current_price
+                perf_journal.log_trade(symbol, "auto", inv["discovery_type"], entry=entry_for_log, exit=current_price, pnl_pct=pnl_pct, outcome="SL")
                 logger.warning(f"❌ {symbol} {msg}")
                 
             # Check Target
@@ -80,8 +125,35 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
                 msg = f"TARGET REACHED: Price hit/exceeded {inv['target_level']:.8f}"
                 alerter.send_status_update(symbol, "TARGET_REACHED", current_price)
                 journal.update_status(inv["id"], "TARGET_REACHED", current_price)
-                perf_journal.log_trade(symbol, "auto", inv["discovery_type"], entry=0, exit=current_price, pnl_pct=5.0, outcome="TP")
+                if entry_price and entry_price > 0:
+                    pnl_pct = ((current_price / float(entry_price)) - 1) * 100
+                    entry_for_log = float(entry_price)
+                else:
+                    pnl_pct = 5.0
+                    entry_for_log = current_price
+                perf_journal.log_trade(symbol, "auto", inv["discovery_type"], entry=entry_for_log, exit=current_price, pnl_pct=pnl_pct, outcome="TP")
                 logger.info(f"🚀 {symbol} {msg}")
+
+            # Time-based thesis expiry to avoid stale active thesis inflation.
+            elif signal_ts:
+                try:
+                    opened_at = datetime.fromisoformat(signal_ts)
+                    age_days = (now_utc - opened_at).total_seconds() / 86400
+                    if age_days >= max_hold_days:
+                        alerter.send_status_update(symbol, "EXPIRED", current_price)
+                        journal.update_status(inv["id"], "EXPIRED", current_price)
+                        if entry_price and entry_price > 0:
+                            pnl_pct = ((current_price / float(entry_price)) - 1) * 100
+                        else:
+                            pnl_pct = 0.0
+                        perf_journal.log_trade(
+                            symbol, "auto", inv["discovery_type"],
+                            entry=float(entry_price or current_price), exit=current_price,
+                            pnl_pct=pnl_pct, outcome="EXPIRED"
+                        )
+                        logger.info(f"⌛ {symbol} thesis expired after {age_days:.1f} days")
+                except Exception:
+                    pass
         return
 
     # 1. Fetch Benchmark (BTC for Crypto, SPY for Stocks)
@@ -129,9 +201,30 @@ def run_investment_scanner(limit: int = 15, mode: str = "crypto", monitor: bool 
             if res.score <= 70 or target_pct < 5.0:
                 logger.info(f"Skipping {symbol} – Score: {res.score:.0f}, TP: {target_pct:.1f}%")
                 continue
+
+            entry_state = (res.extra_metadata or {}).get("entry_state", "UNKNOWN")
+            overextended = bool((res.extra_metadata or {}).get("overextended", False))
+            upside_to_target = float((res.extra_metadata or {}).get("upside_to_target_pct", 0.0) or 0.0)
+
+            if entry_state != "READY":
+                logger.info(f"Skipping {symbol} – Entry state: {entry_state}")
+                continue
+            if overextended:
+                logger.info(f"Skipping {symbol} – Overextended setup")
+                continue
+            if upside_to_target < 4.0:
+                logger.info(f"Skipping {symbol} – Low runway ({upside_to_target:.1f}%)")
+                continue
             
             # High-conviction signal found!
             res.discovery_type = "crypto"
+            if res.extra_metadata is None:
+                res.extra_metadata = {}
+            res.extra_metadata.update({
+                "pair_address": address,
+                "chain_id": chain,
+                "token_address": item.get("baseToken", {}).get("address"),
+            })
             results.append(res)
             report_path = f"data/reports/invest_{symbol}.html"
             report_png = f"data/reports/invest_{symbol}.png"

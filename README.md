@@ -21,7 +21,7 @@ If your old Telegram bot token was exposed, rotate it in BotFather before runnin
 ## What this bot does not do (yet)
 
 - Direct wallet execution
-- Full backtesting engine
+- Tick-level execution simulation
 - Web dashboard
 
 ## Setup
@@ -51,7 +51,20 @@ python3 dex_bot.py
 4. Check 14-day validation stats:
 
 ```bash
-python3 stats_report.py --db dex_analytics.db --days 14
+python3 scripts/stats_report.py
+```
+
+5. Backtest the current scanner logic with local parquet data:
+
+```bash
+python3 scripts/backtest_investment_strategy.py \
+  --glob "data/parquet/crypto/*1440.parquet" \
+  --benchmark "data/parquet/crypto/BTCUSD1440.parquet" \
+  --lookback 100 \
+  --horizon 20 \
+  --min-score 70 \
+  --min-target-potential 5 \
+  --min-upside-to-target 4
 ```
 
 ## Telegram alert format

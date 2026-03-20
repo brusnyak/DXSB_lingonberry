@@ -1,6 +1,10 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
 from src.analysis.ict_analyst import Candle
+import numpy as np
+import pandas as pd
+import csv
+from datetime import datetime
 
 class BaseAdapter(ABC):
     """Base class for all market adapters (DEX, CEX, Stocks)."""
@@ -275,8 +279,15 @@ class ParquetAdapter(BaseAdapter):
 
     def fetch_candles(self, file_path: str, interval: str = "1m", limit: int = 100, chain_id: Optional[str] = None) -> List[Candle]:
         try:
-            import pandas as pd
-            df = pd.read_parquet(file_path)
+            if file_path.endswith(".csv"):
+                return self._fetch_csv_candles(file_path)
+
+            try:
+                df = pd.read_parquet(file_path)
+            except Exception:
+                # Fallback for environments with incompatible parquet stack.
+                csv_path = file_path.replace("/parquet/", "/charts/").replace(".parquet", ".csv")
+                return self._fetch_csv_candles(csv_path)
             # Standardize columns to lowercase
             df.columns = [c.lower() for c in df.columns]
             
@@ -290,14 +301,32 @@ class ParquetAdapter(BaseAdapter):
             # If large file, we might want to take a window, but let's take everything for now
             # and let the caller handle windowing.
             for idx, row in df.iterrows():
+                def _scalar(v):
+                    if isinstance(v, np.ndarray):
+                        if v.size == 0:
+                            return None
+                        return v.flatten()[0]
+                    if isinstance(v, (list, tuple)):
+                        if not v:
+                            return None
+                        return v[0]
+                    return v
+
+                def _to_float(v, default=0.0):
+                    vv = _scalar(v)
+                    try:
+                        return float(vv)
+                    except Exception:
+                        return float(default)
+
                 if has_ts:
-                    raw_ts = row.get("timestamp") or row.get("time") or row.get("date") or row.get("datetime")
+                    raw_ts = _scalar(row.get("timestamp")) or _scalar(row.get("time")) or _scalar(row.get("date")) or _scalar(row.get("datetime"))
                     if isinstance(raw_ts, str):
                         ts = int(pd.to_datetime(raw_ts).timestamp())
                     elif hasattr(raw_ts, "timestamp"):
                         ts = int(raw_ts.timestamp())
                     else:
-                        ts = int(raw_ts)
+                        ts = int(raw_ts) if raw_ts is not None else 0
                 elif hasattr(idx, "timestamp"):
                     ts = int(idx.timestamp())
                 else:
@@ -305,16 +334,83 @@ class ParquetAdapter(BaseAdapter):
                     
                 candles.append(Candle(
                     timestamp=ts,
-                    open=float(row["open"]),
-                    high=float(row["high"]),
-                    low=float(row["low"]),
-                    close=float(row["close"]),
-                    volume=float(row.get("volume", 0))
+                    open=_to_float(row["open"]),
+                    high=_to_float(row["high"]),
+                    low=_to_float(row["low"]),
+                    close=_to_float(row["close"]),
+                    volume=_to_float(row.get("volume", 0))
                 ))
-            return candles
+            return [c for c in candles if c.open > 0 and c.high > 0 and c.low > 0 and c.close > 0]
         except Exception as e:
-            print(f"Parquet fetch failed for {file_path}: {e}")
+            print(f"Parquet/CSV fetch failed for {file_path}: {e}")
             return []
+
+    def _fetch_csv_candles(self, csv_path: str) -> List[Candle]:
+        candles: List[Candle] = []
+        with open(csv_path, "r", newline="", encoding="utf-8") as f:
+            first_line = f.readline().strip()
+            if not first_line:
+                return []
+            f.seek(0)
+
+            # Format A: tab-delimited rows without headers: datetime,open,high,low,close,volume
+            if "\t" in first_line and ("open" not in first_line.lower()):
+                for raw in f:
+                    parts = raw.strip().split("\t")
+                    if len(parts) < 6:
+                        continue
+                    dt_str, o, h, l, c, v = parts[:6]
+                    try:
+                        ts = int(datetime.fromisoformat(dt_str.replace(" ", "T")).timestamp())
+                    except Exception:
+                        ts = 0
+                    try:
+                        candles.append(
+                            Candle(
+                                timestamp=ts,
+                                open=float(o),
+                                high=float(h),
+                                low=float(l),
+                                close=float(c),
+                                volume=float(v),
+                            )
+                        )
+                    except Exception:
+                        continue
+            else:
+                # Format B: standard CSV with headers
+                reader = csv.DictReader(f)
+                for row in reader:
+                    lower = {k.lower(): v for k, v in row.items() if k is not None}
+                    raw_ts = lower.get("timestamp") or lower.get("time") or lower.get("date") or lower.get("datetime")
+                    ts = 0
+                    if raw_ts:
+                        try:
+                            ts = int(float(raw_ts))
+                        except Exception:
+                            try:
+                                ts = int(datetime.fromisoformat(raw_ts.replace("Z", "+00:00")).timestamp())
+                            except Exception:
+                                ts = 0
+
+                    def _f(key: str, default: float = 0.0) -> float:
+                        try:
+                            return float(lower.get(key, default))
+                        except Exception:
+                            return float(default)
+
+                    candles.append(
+                        Candle(
+                            timestamp=ts,
+                            open=_f("open"),
+                            high=_f("high"),
+                            low=_f("low"),
+                            close=_f("close"),
+                            volume=_f("volume"),
+                        )
+                    )
+
+        return [c for c in candles if c.open > 0 and c.high > 0 and c.low > 0 and c.close > 0]
 
     def get_market_data(self, file_path: str, chain_id: Optional[str] = None) -> Dict:
         return {"priceUsd": 0.0}
