@@ -98,8 +98,9 @@ class ReportingService:
         recs = deduped
         blocked = [row for row in recs if row["status"] == "blocked"]
         actionable = [row for row in recs if row["status"] == "actionable"]
-        research_rows = [row for row in recs if row["sleeve"] == "research"]
+        research_rows = self._collapse_research_rows([row for row in recs if row["sleeve"] == "research"])
         research_actionable = [row for row in research_rows if row["status"] == "actionable"]
+        research_blocked = [row for row in research_rows if row["status"] == "blocked"]
         research_watchlist = [row for row in research_rows if row["status"] == "watchlist"]
         concentration = defaultdict(float)
         for row in earn_positions:
@@ -116,17 +117,18 @@ class ReportingService:
         ]
 
         lines = [
+            "💼 Lingonberry Investing",
             "Binance Two-Sleeve Daily Report",
             "================================",
-            f"Snapshot: {snapshot['snapshot_ts']}",
-            f"Total equity: ${snapshot['total_equity']:,.2f} | EUR {snapshot.get('total_equity_eur', 0.0):,.2f}",
-            f"Earn sleeve: ${snapshot['earn_equity']:,.2f} | APR-weighted est: {analytics['effective_apr'] * 100:.2f}% | accrued yield: ${snapshot['accrued_yield_usd']:,.2f}",
-            f"Spot sleeve: ${snapshot['spot_equity']:,.2f} | free cash: ${snapshot['free_cash']:,.2f} | EUR {snapshot.get('free_cash_eur', 0.0):,.2f} | buying power: ${snapshot['buying_power']:,.2f}",
-            f"Locked cash: ${snapshot['locked_cash']:,.2f} | active spot positions: {len(spot_positions)}",
-            f"Realized PnL: ${snapshot['realized_pnl_usd']:,.2f} | Unrealized PnL: ${snapshot['unrealized_pnl_usd']:,.2f}",
-            f"Rolling returns: 7d {analytics['rolling_7d_pct']:.2f}% | 30d {analytics['rolling_30d_pct']:.2f}%",
+            f"🕒 Snapshot: {snapshot['snapshot_ts']}",
+            f"💰 Total equity: ${snapshot['total_equity']:,.2f} | EUR {snapshot.get('total_equity_eur', 0.0):,.2f}",
+            f"🏦 Earn sleeve: ${snapshot['earn_equity']:,.2f} | APR-weighted est: {analytics['effective_apr'] * 100:.2f}% | accrued yield: ${snapshot['accrued_yield_usd']:,.2f}",
+            f"🎯 Spot sleeve: ${snapshot['spot_equity']:,.2f} | free cash: ${snapshot['free_cash']:,.2f} | EUR {snapshot.get('free_cash_eur', 0.0):,.2f} | buying power: ${snapshot['buying_power']:,.2f}",
+            f"🔒 Locked cash: ${snapshot['locked_cash']:,.2f} | active spot positions: {len(spot_positions)}",
+            f"📊 Realized PnL: ${snapshot['realized_pnl_usd']:,.2f} | Unrealized PnL: ${snapshot['unrealized_pnl_usd']:,.2f}",
+            f"📈 Rolling returns: 7d {analytics['rolling_7d_pct']:.2f}% | 30d {analytics['rolling_30d_pct']:.2f}%",
             "",
-            "Cash balances:",
+            "💶 Cash balances:",
         ]
         if cash_balances:
             lines.extend([f"- {row['asset']}: ${row['value_usd']:,.2f} | EUR {row['value_eur']:,.2f}" for row in cash_balances])
@@ -134,7 +136,7 @@ class ReportingService:
             lines.append("- No free cash balances recorded.")
         lines += [
             "",
-            "Top concentration:",
+            "🧱 Top concentration:",
         ]
         if concentration_lines:
             lines.extend([f"- {name}: ${value:,.2f}" for name, value in concentration_lines])
@@ -142,7 +144,7 @@ class ReportingService:
             lines.append("- No active exposure recorded.")
         lines += [
             "",
-            "Next unlock dates:",
+            "🗓️ Next unlock dates:",
         ]
         if unlocks:
             lines.extend([f"- {item}" for item in unlocks])
@@ -150,12 +152,12 @@ class ReportingService:
             lines.append("- No locked Earn positions.")
         lines += [
             "",
-            "Actionable ideas:",
+            "🚀 Actionable ideas:",
         ]
         if actionable:
             lines.extend(
                 [
-                    f"- {row['sleeve']} {row['symbol_or_asset']} {row['action']} ${row['capital_required_usd']:,.2f}: {row['reason']}"
+                    f"- {row['sleeve']} {row['symbol_or_asset']} {row['action']} ${row['capital_required_usd']:,.2f}: {self._compact_reason(row['reason'], max_parts=3)}"
                     for row in actionable[:5]
                 ]
             )
@@ -163,12 +165,12 @@ class ReportingService:
             lines.append("- No actionable recommendations.")
         lines += [
             "",
-            "Blocked ideas:",
+            "⛔ Blocked ideas:",
         ]
         if blocked:
             lines.extend(
                 [
-                    f"- {row['sleeve']} {row['symbol_or_asset']} ${row['capital_required_usd']:,.2f}: {row['reason']}"
+                    f"- {row['sleeve']} {row['symbol_or_asset']} ${row['capital_required_usd']:,.2f}: {self._compact_reason(row['reason'], max_parts=3)}"
                     for row in blocked[:5]
                 ]
             )
@@ -176,21 +178,28 @@ class ReportingService:
             lines.append("- No blocked recommendations.")
         lines += [
             "",
-            "Binance research monitor:",
+            "🔎 Binance research monitor:",
         ]
         if research_actionable:
             lines.extend(
                 [
-                    f"- actionable {row['symbol_or_asset']} ${row['capital_required_usd']:,.2f}: {row['reason']}"
+                    f"- 🚀 {row['symbol_or_asset']} ${row['capital_required_usd']:,.2f}: {self._compact_reason(self._research_line(row), max_parts=4)}"
                     for row in research_actionable[:5]
                 ]
             )
         else:
             lines.append("- No actionable research setups.")
+        if research_blocked:
+            lines.extend(
+                [
+                    f"- ⛔ {row['symbol_or_asset']} ${row['capital_required_usd']:,.2f}: {self._compact_reason(self._research_line(row), max_parts=4)}"
+                    for row in research_blocked[:3]
+                ]
+            )
         if research_watchlist:
             lines.extend(
                 [
-                    f"- watch {row['symbol_or_asset']}: {self._research_line(row)}"
+                    f"- 👀 watch {row['symbol_or_asset']}: {self._compact_reason(self._research_line(row), max_parts=4)}"
                     for row in research_watchlist[:5]
                 ]
             )
@@ -198,7 +207,7 @@ class ReportingService:
             lines.append("- No research watchlist items.")
         lines += [
             "",
-            "Simple Earn board:",
+            "💰 Simple Earn board:",
         ]
         if earn_products:
             for row in earn_products[:5]:
@@ -211,14 +220,14 @@ class ReportingService:
             lines.append("- No Simple Earn offers synced yet.")
         lines += [
             "",
-            "Spot analytics:",
+            "📈 Spot analytics:",
             f"- Win rate: {analytics['win_rate_pct']:.2f}%",
             f"- Avg win/loss: ${analytics['avg_win_usd']:,.2f} / ${analytics['avg_loss_usd']:,.2f}",
             f"- Expectancy: ${analytics['expectancy_usd']:,.2f}",
             f"- Profit factor: {analytics['profit_factor']:.2f}" if analytics["profit_factor"] is not None else "- Profit factor: n/a",
             f"- Max drawdown: {analytics['max_drawdown_pct']:.2f}%",
             "",
-            "Earn analytics:",
+            "🏦 Earn analytics:",
             f"- Realized yield proxy: ${analytics['realized_yield_usd']:,.2f}",
             f"- Effective APR: {analytics['effective_apr'] * 100:.2f}%",
             f"- Locked vs unlocked days: {analytics['locked_days']:.1f} / {analytics['unlocked_days']:.1f}",
@@ -264,31 +273,33 @@ class ReportingService:
                 }
             )
         if not delta_rows:
-            return "Binance Research Alert\n======================\nNo material research changes since last alert."
+            return "🔎 Binance Research Alert\n======================\n😴 No material research changes since last alert."
 
         actionable = [row for row in delta_rows if row["status"] == "actionable"][:3]
         blocked = [row for row in delta_rows if row["status"] == "blocked"][:4]
         watchlist = [row for row in delta_rows if row["status"] == "watchlist"][:4]
 
         lines = [
+            "💼 Lingonberry Investing",
             "Binance Research Alert",
             "======================",
+            f"🧠 Candidates changed: {len(delta_rows)}",
         ]
         if actionable:
-            lines.append("Actionable:")
+            lines.append("🚀 Actionable:")
             lines.extend([self._research_alert_line(row, stats) for row in actionable])
         else:
-            lines.append("Actionable:")
+            lines.append("🚀 Actionable:")
             lines.append("- No actionable research setups.")
 
         if blocked:
             lines.append("")
-            lines.append("Blocked:")
+            lines.append("⛔ Blocked:")
             lines.extend([self._research_alert_line(row, stats) for row in blocked])
 
         if watchlist:
             lines.append("")
-            lines.append("Watchlist:")
+            lines.append("👀 Watchlist:")
             lines.extend([self._research_alert_line(row, stats) for row in watchlist])
 
         self.repository.upsert_research_alert_state(state_updates)
@@ -397,13 +408,34 @@ class ReportingService:
             return f"{reason} | {'; '.join(extras)}"
         return reason
 
+    @staticmethod
+    def _compact_reason(reason: str, max_parts: int = 3) -> str:
+        parts = [item.strip() for item in reason.split(";") if item.strip()]
+        if not parts:
+            return reason
+        compact = parts[:max_parts]
+        if len(parts) > max_parts:
+            compact.append("more context on demand")
+        return "; ".join(compact)
+
+    @staticmethod
+    def _label_badge(label: Optional[str]) -> Optional[str]:
+        if not label:
+            return None
+        return {
+            "fresh": "🆕 fresh",
+            "recurring": "🔁 recurring",
+            "improving": "⬆️ improving",
+            "deteriorating": "⬇️ deteriorating",
+        }.get(label, label)
+
     @classmethod
     def _research_alert_line(cls, row: Dict, stats: Dict[str, Dict]) -> str:
         symbol = row["symbol_or_asset"]
-        reason = cls._research_line(row)
+        reason = cls._compact_reason(cls._research_line(row), max_parts=4)
         history = stats.get(symbol) or {}
         suffix = []
-        label = row.get("_alert_label")
+        label = cls._label_badge(row.get("_alert_label"))
         if label:
             suffix.append(label)
         scans = history.get("scans")
@@ -417,4 +449,9 @@ class ReportingService:
             suffix.append(f"{int(blocked_count)} blocked")
         history_text = f" [{', '.join(suffix)}]" if suffix else ""
         capital = f" ${row['capital_required_usd']:,.2f}" if row["capital_required_usd"] else ""
-        return f"- {symbol}{capital}: {reason}{history_text}"
+        status_icon = {
+            "actionable": "🚀",
+            "blocked": "⛔",
+            "watchlist": "👀",
+        }.get(row["status"], "•")
+        return f"- {status_icon} {symbol}{capital}: {reason}{history_text}"
