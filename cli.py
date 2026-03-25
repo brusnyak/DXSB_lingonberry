@@ -6,6 +6,7 @@ from src.planner.config import load_config
 from src.planner.events import EventIngestService
 from src.planner.backtest import BacktestService
 from src.planner.portfolio import PortfolioService
+from src.planner.research import BinanceResearchService
 from src.planner.reporting import ReportingService
 from src.planner.storage import PlannerRepository
 from src.planner.strategy import SpotStrategyService
@@ -42,15 +43,19 @@ def build_parser() -> argparse.ArgumentParser:
     research_sub = research.add_subparsers(dest="research_command", required=True)
     ingest = research_sub.add_parser("ingest-events")
     ingest.add_argument("--file", required=True)
+    research_sub.add_parser("sync-earn")
 
     strategy = subparsers.add_parser("strategy")
     strategy_sub = strategy.add_subparsers(dest="strategy_command", required=True)
     strategy_sub.add_parser("scan-spot")
+    strategy_sub.add_parser("scan-research")
 
     report = subparsers.add_parser("report")
     report_sub = report.add_subparsers(dest="report_command", required=True)
     daily = report_sub.add_parser("daily")
     daily.add_argument("--telegram", action="store_true")
+    research_report = report_sub.add_parser("research")
+    research_report.add_argument("--telegram", action="store_true")
 
     backtest = subparsers.add_parser("backtest")
     backtest_sub = backtest.add_subparsers(dest="backtest_command", required=True)
@@ -97,21 +102,40 @@ def main() -> None:
             return
 
     if args.command == "research":
-        inserted = EventIngestService(repo).ingest_file(args.file)
-        print(json.dumps({"inserted_events": inserted, "file": args.file}, indent=2))
+        if args.research_command == "ingest-events":
+            inserted = EventIngestService(repo).ingest_file(args.file)
+            print(json.dumps({"inserted_events": inserted, "file": args.file}, indent=2))
+            return
+        if args.research_command == "sync-earn":
+            synced = BinanceResearchService(repo, BinanceGateway(), config).sync_earn_products()
+            print(json.dumps(synced, indent=2))
+            return
         return
 
     if args.command == "strategy":
-        rows = SpotStrategyService(repo, BinanceGateway(), config).scan()
-        print(json.dumps(rows, indent=2))
-        return
+        if args.strategy_command == "scan-spot":
+            rows = SpotStrategyService(repo, BinanceGateway(), config).scan()
+            print(json.dumps(rows, indent=2))
+            return
+        if args.strategy_command == "scan-research":
+            rows = BinanceResearchService(repo, BinanceGateway(), config).scan_earn_opportunities()
+            print(json.dumps(rows, indent=2))
+            return
 
     if args.command == "report":
-        text = ReportingService(repo, config).daily_report_text()
-        print(text)
-        if args.telegram:
-            send_plain_text(text)
-        return
+        reporting = ReportingService(repo, config)
+        if args.report_command == "daily":
+            text = reporting.daily_report_text()
+            print(text)
+            if args.telegram:
+                send_plain_text(text)
+            return
+        if args.report_command == "research":
+            text = reporting.research_alert_text()
+            print(text)
+            if args.telegram:
+                send_plain_text(text)
+            return
 
     if args.command == "backtest":
         metrics = BacktestService(repo, BinanceGateway(), config).run_spot_backtest(limit_events=args.limit_events)

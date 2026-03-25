@@ -1,157 +1,76 @@
-# DXSB Lingonberry MVP
+# DXSB Lingonberry
 
-Semi-automated signal bot for DexScreener markets (Solana + EVM):
+Binance-focused research and portfolio planner for a two-sleeve workflow:
 
-- Finds candidate pairs
-- Applies safety checks (honeypot/rugcheck + gas/slippage guards)
-- Sends manual-execution Telegram alerts
-- Tracks open signal outcomes to build 2-week validation stats
+- `Earn sleeve`: track yield parking and Simple Earn opportunities
+- `Spot sleeve`: research-only catalyst and pullback ideas for manual execution
+- `Reporting`: portfolio, blocked ideas, research watchlist, and Simple Earn board
 
-## Important security note
+## Current scope
 
-If your old Telegram bot token was exposed, rotate it in BotFather before running this bot.
+- Manual execution only
+- Binance account sync
+- Simple Earn offer sync
+- Binance research scan from live Earn offers plus market context
+- Telegram plain-text reporting
 
-## What this bot does
-
-- Alert-only workflow (you execute manually)
-- Position sizing from bankroll and risk-per-quality rules
-- Liquidity-based stop + RR-based take-profit targets
-- Blocks signal generation during low-liquidity local hours
-
-## What this bot does not do (yet)
-
-- Direct wallet execution
-- Tick-level execution simulation
-- Web dashboard
+Legacy DexScreener and ICT scanner logic is no longer part of the active planner flow. The old chart helpers may still remain in the repo for reference, but legacy scanner commands are deprecated.
 
 ## Setup
-
-1. Create a Python virtual environment and install deps:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env
 ```
 
-2. Configure:
+Configure:
 
-- Edit `config.json`
-- Or set env vars:
-  - `TELEGRAM_BOT_TOKEN`
-  - `TELEGRAM_CHAT_ID`
-  - `cp .env.example .env` and export from shell if preferred
+- `BINANCE_API_KEY`
+- `BINANCE_SECRET_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
 
-3. Run:
+## Main commands
 
 ```bash
-python3 dex_bot.py
+python3 cli.py portfolio sync
+python3 cli.py research sync-earn
+python3 cli.py strategy scan-research
+python3 cli.py report daily
 ```
 
-4. Check 14-day validation stats:
+Manual event ingestion:
 
 ```bash
-python3 scripts/stats_report.py
+python3 cli.py research ingest-events --file data/events/manual_events.json
 ```
 
-5. Backtest the current scanner logic with local parquet data:
+## Timed planner cycle
 
 ```bash
-python3 scripts/backtest_investment_strategy.py \
-  --glob "data/parquet/crypto/*1440.parquet" \
-  --benchmark "data/parquet/crypto/BTCUSD1440.parquet" \
-  --lookback 100 \
-  --horizon 20 \
-  --min-score 70 \
-  --min-target-potential 5 \
-  --min-upside-to-target 4
+scripts/planner_cycle.sh
 ```
 
-## Telegram alert format
+It runs:
 
-Top section = quick decision fields (quality, entry, SL/TP, size).
-After `========` = context (score, liquidity, volume, age, slippage, link).
+1. `portfolio sync`
+2. `research sync-earn`
+3. `strategy scan-spot`
+4. `strategy scan-research`
+5. `report daily`
 
-Execution links are configured per chain in `config.json` under `execution_links`.
-Replace defaults with your personal referral/deep links as needed.
-
-## Recommended deployment (no Docker)
-
-Use Ubuntu VPS + `systemd`.
-
-One-command scripts are included:
-
-- `/Users/yegor/Documents/Agency & Security Stuff/Development/dexscreener-bot/scripts/deploy.sh`
-- `/Users/yegor/Documents/Agency & Security Stuff/Development/dexscreener-bot/scripts/update.sh`
-
-First deploy on VPS:
+## Deployment helpers
 
 ```bash
-APP_DIR=/opt/dxsb LINUX_USER=$USER bash scripts/deploy.sh
+make test
+make planner-sync
+make planner-report
+make server-update
+make server-install-services
 ```
 
-Update after new push:
+## Telegram daemon
 
-```bash
-APP_DIR=/opt/dxsb BRANCH=main bash scripts/update.sh
-```
-
-Example unit file (`/etc/systemd/system/dxsb.service`):
-
-```ini
-[Unit]
-Description=DXSB Lingonberry Bot
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/opt/dxsb
-Environment=TELEGRAM_BOT_TOKEN=REPLACE_ME
-Environment=TELEGRAM_CHAT_ID=REPLACE_ME
-ExecStart=/opt/dxsb/.venv/bin/python /opt/dxsb/dex_bot.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable dxsb
-sudo systemctl start dxsb
-sudo systemctl status dxsb
-journalctl -u dxsb -f
-```
-
-## Validation gate before live capital
-
-Target gate:
-
-- > = 14 days paper data
-  >
-- > = 60 closed signals
-  >
-- Win rate >= 70%
-- Profit factor >= 2.0
-- Max drawdown <= 3%
-
-## Repo workflow
-
-You can push this project to your new repo:
-
-- [DXSB_lingonberry](https://github.com/brusnyak/DXSB_lingonberry.git)
-
-Example:
-
-```bash
-git remote add origin https://github.com/brusnyak/DXSB_lingonberry.git
-git add .
-git commit -m \"Build DXSB semi-auto MVP\"
-git push -u origin main
-```
-
-Vercel is suitable for a dashboard/UI later, not for this always-on bot process.
+`scripts/telegram_daemon.py` now acts as a thin planner wrapper. Legacy `/scan`, `/monitor`, and `/invest` commands are intentionally deprecated there to avoid accidental use of the old DexScreener workflow.

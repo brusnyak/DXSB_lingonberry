@@ -13,6 +13,9 @@ SUPPORTED_EVENT_TYPES = {
     "hodler_airdrop",
     "spot_listing",
     "academy_project_post",
+    "unlock_event",
+    "ai_insight",
+    "earn_featured",
 }
 
 
@@ -63,4 +66,3 @@ class EventIngestService:
         ]
         self.repository.upsert_assets(assets)
         return self.repository.insert_events(rows)
-

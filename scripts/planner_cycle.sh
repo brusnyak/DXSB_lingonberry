@@ -13,11 +13,14 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
 fi
 
 "$PYTHON_BIN" cli.py portfolio sync
+"$PYTHON_BIN" cli.py research sync-earn
 "$PYTHON_BIN" cli.py strategy scan-spot
+"$PYTHON_BIN" cli.py strategy scan-research
 
 if [[ "$SEND_REPORT" == "1" ]]; then
+  "$PYTHON_BIN" cli.py report research --telegram
   "$PYTHON_BIN" cli.py report daily --telegram
 else
+  "$PYTHON_BIN" cli.py report research
   "$PYTHON_BIN" cli.py report daily
 fi
-

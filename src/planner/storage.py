@@ -126,6 +126,68 @@ class PlannerRepository:
                 params_json TEXT NOT NULL,
                 metrics_json TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS earn_products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_ts TEXT NOT NULL,
+                asset TEXT NOT NULL,
+                product_type TEXT NOT NULL,
+                apr REAL DEFAULT 0.0,
+                duration_days INTEGER,
+                min_purchase_amount REAL DEFAULT 0.0,
+                can_purchase INTEGER DEFAULT 0,
+                can_redeem INTEGER DEFAULT 0,
+                is_sold_out INTEGER DEFAULT 0,
+                is_hot INTEGER DEFAULT 0,
+                status TEXT,
+                extra_reward_asset TEXT,
+                extra_reward_apr REAL DEFAULT 0.0,
+                raw_json TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS external_context_cache (
+                provider TEXT NOT NULL,
+                asset TEXT NOT NULL,
+                fetched_ts TEXT NOT NULL,
+                expires_ts TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                PRIMARY KEY (provider, asset)
+            );
+
+            CREATE TABLE IF NOT EXISTS research_candidate_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                symbol_or_asset TEXT NOT NULL,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                priority INTEGER NOT NULL,
+                capital_required_usd REAL DEFAULT 0.0,
+                reason TEXT NOT NULL,
+                metadata_json TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS research_alert_state (
+                symbol_or_asset TEXT NOT NULL,
+                action TEXT NOT NULL,
+                last_sent_ts TEXT NOT NULL,
+                last_status TEXT NOT NULL,
+                last_priority INTEGER NOT NULL,
+                fingerprint TEXT NOT NULL,
+                PRIMARY KEY (symbol_or_asset, action)
+            );
+
+            CREATE TABLE IF NOT EXISTS research_outcome_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                symbol_or_asset TEXT NOT NULL,
+                action TEXT NOT NULL,
+                status TEXT NOT NULL,
+                entry_price REAL,
+                ret_24h_pct REAL,
+                ret_7d_pct REAL,
+                quote_volume_usd_24h REAL,
+                metadata_json TEXT
+            );
             """
         )
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(portfolio_snapshots)").fetchall()}
@@ -313,11 +375,122 @@ class PlannerRepository:
         conn.commit()
         conn.close()
 
+    def record_research_candidates(self, rows: Iterable[Dict]) -> None:
+        payload = [row for row in rows if row.get("sleeve") == "research"]
+        if not payload:
+            return
+        conn = self._connect()
+        conn.executemany(
+            """
+            INSERT INTO research_candidate_history (
+                ts, symbol_or_asset, action, status, priority,
+                capital_required_usd, reason, metadata_json
+            ) VALUES (
+                :ts, :symbol_or_asset, :action, :status, :priority,
+                :capital_required_usd, :reason, :metadata_json
+            )
+            """,
+            payload,
+        )
+        conn.commit()
+        conn.close()
+
+    def research_candidate_stats(self) -> Dict[str, Dict]:
+        conn = self._connect()
+        rows = conn.execute(
+            """
+            SELECT
+                symbol_or_asset,
+                COUNT(*) AS scans,
+                SUM(CASE WHEN status = 'actionable' THEN 1 ELSE 0 END) AS actionable_count,
+                SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blocked_count,
+                SUM(CASE WHEN status = 'watchlist' THEN 1 ELSE 0 END) AS watchlist_count,
+                MIN(ts) AS first_ts,
+                MAX(ts) AS last_ts
+            FROM research_candidate_history
+            GROUP BY symbol_or_asset
+            """
+        ).fetchall()
+        conn.close()
+        return {
+            row["symbol_or_asset"]: dict(row)
+            for row in rows
+        }
+
     def recent_recommendations(self, limit: int = 20) -> List[Dict]:
         conn = self._connect()
         rows = conn.execute(
             "SELECT * FROM recommendations ORDER BY ts DESC, priority DESC LIMIT ?",
             (limit,),
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def research_alert_state_map(self) -> Dict[str, Dict]:
+        conn = self._connect()
+        rows = conn.execute(
+            "SELECT * FROM research_alert_state"
+        ).fetchall()
+        conn.close()
+        return {
+            f"{row['symbol_or_asset']}::{row['action']}": dict(row)
+            for row in rows
+        }
+
+    def upsert_research_alert_state(self, rows: Iterable[Dict]) -> None:
+        payload = list(rows)
+        if not payload:
+            return
+        conn = self._connect()
+        conn.executemany(
+            """
+            INSERT INTO research_alert_state (
+                symbol_or_asset, action, last_sent_ts, last_status, last_priority, fingerprint
+            ) VALUES (
+                :symbol_or_asset, :action, :last_sent_ts, :last_status, :last_priority, :fingerprint
+            )
+            ON CONFLICT(symbol_or_asset, action) DO UPDATE SET
+                last_sent_ts=excluded.last_sent_ts,
+                last_status=excluded.last_status,
+                last_priority=excluded.last_priority,
+                fingerprint=excluded.fingerprint
+            """,
+            payload,
+        )
+        conn.commit()
+        conn.close()
+
+    def record_research_outcome_snapshots(self, rows: Iterable[Dict]) -> None:
+        payload = list(rows)
+        if not payload:
+            return
+        conn = self._connect()
+        conn.executemany(
+            """
+            INSERT INTO research_outcome_snapshots (
+                ts, symbol_or_asset, action, status, entry_price,
+                ret_24h_pct, ret_7d_pct, quote_volume_usd_24h, metadata_json
+            ) VALUES (
+                :ts, :symbol_or_asset, :action, :status, :entry_price,
+                :ret_24h_pct, :ret_7d_pct, :quote_volume_usd_24h, :metadata_json
+            )
+            """,
+            payload,
+        )
+        conn.commit()
+        conn.close()
+
+    def recent_research_outcomes(self, symbol_or_asset: str, limit: int = 10) -> List[Dict]:
+        conn = self._connect()
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM research_outcome_snapshots
+            WHERE symbol_or_asset = ?
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            (symbol_or_asset, limit),
         ).fetchall()
         conn.close()
         return [dict(row) for row in rows]
@@ -341,6 +514,82 @@ class PlannerRepository:
         ).fetchone()
         conn.close()
         return dict(row) if row else None
+
+    def replace_earn_products(self, snapshot_ts: str, rows: Iterable[Dict]) -> None:
+        payload = list(rows)
+        conn = self._connect()
+        conn.execute("DELETE FROM earn_products WHERE snapshot_ts = ?", (snapshot_ts,))
+        conn.executemany(
+            """
+            INSERT INTO earn_products (
+                snapshot_ts, asset, product_type, apr, duration_days, min_purchase_amount,
+                can_purchase, can_redeem, is_sold_out, is_hot, status, extra_reward_asset,
+                extra_reward_apr, raw_json
+            ) VALUES (
+                :snapshot_ts, :asset, :product_type, :apr, :duration_days, :min_purchase_amount,
+                :can_purchase, :can_redeem, :is_sold_out, :is_hot, :status, :extra_reward_asset,
+                :extra_reward_apr, :raw_json
+            )
+            """,
+            payload,
+        )
+        conn.commit()
+        conn.close()
+
+    def latest_earn_products(self) -> List[Dict]:
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT snapshot_ts FROM earn_products ORDER BY snapshot_ts DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            conn.close()
+            return []
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM earn_products
+            WHERE snapshot_ts = ?
+            ORDER BY apr DESC, is_hot DESC, can_purchase DESC, asset ASC
+            """,
+            (row["snapshot_ts"],),
+        ).fetchall()
+        conn.close()
+        return [dict(item) for item in rows]
+
+    def get_cached_context(self, provider: str, asset: str, now_ts: str) -> Optional[Dict]:
+        conn = self._connect()
+        row = conn.execute(
+            """
+            SELECT *
+            FROM external_context_cache
+            WHERE provider = ?
+              AND asset = ?
+              AND expires_ts >= ?
+            """,
+            (provider, asset, now_ts),
+        ).fetchone()
+        conn.close()
+        if not row:
+            return None
+        payload = dict(row)
+        payload["payload"] = json.loads(payload["payload_json"])
+        return payload
+
+    def upsert_cached_context(self, provider: str, asset: str, fetched_ts: str, expires_ts: str, payload: Dict) -> None:
+        conn = self._connect()
+        conn.execute(
+            """
+            INSERT INTO external_context_cache (provider, asset, fetched_ts, expires_ts, payload_json)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(provider, asset) DO UPDATE SET
+                fetched_ts=excluded.fetched_ts,
+                expires_ts=excluded.expires_ts,
+                payload_json=excluded.payload_json
+            """,
+            (provider, asset, fetched_ts, expires_ts, json.dumps(payload)),
+        )
+        conn.commit()
+        conn.close()
 
     def reconcile_spot_position(self, payload: Dict) -> None:
         conn = self._connect()

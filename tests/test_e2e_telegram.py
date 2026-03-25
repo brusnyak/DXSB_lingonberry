@@ -1,81 +1,51 @@
-import sys
-import os
 import asyncio
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-# Ensure project root is in sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from scripts.telegram_daemon import invest, monitor, report, research, scan, start, stats
 
-from scripts.telegram_daemon import start, invest, scan, monitor, stats
 
 async def run_e2e_tests():
-    print("\n" + "="*50)
-    print("🚀 RUNNING END-TO-END TELEGRAM BOT TESTS")
-    print("="*50 + "\n")
-
-    # Mocks for python-telegram-bot
     update = MagicMock()
     update.message = AsyncMock()
     context = MagicMock()
+    context.args = []
 
-    # 1. Test /start
-    print("--- Testing /start Command ---")
     await start(update, context)
-    update.message.reply_text.assert_called()
-    print("✅ /start successful (Welcome message sent)\n")
+    assert update.message.reply_text.call_count == 1
+    assert "Binance research bot" in update.message.reply_text.call_args[0][0]
     update.message.reply_text.reset_mock()
 
-    # 2. Test /stats
-    print("--- Testing /stats Command (Journaling check) ---")
-    await stats(update, context)
-    update.message.reply_text.assert_called()
-    msg = update.message.reply_text.call_args[0][0]
-    print(f"Stats output:\n{msg}")
-    print("✅ /stats successful\n")
-    update.message.reply_text.reset_mock()
-
-    # 3. Test /invest BTCUSDT (Crypto Analysis)
-    print("--- Testing /invest BTCUSDT Command (Analysis Pipeline) ---")
-    context.args = ["BTCUSDT"]
     await invest(update, context)
-    
-    # invest sends 2 messages (analyzing... then result)
-    assert update.message.reply_text.call_count == 2
-    msg = update.message.reply_text.call_args[0][0]
-    print(f"Analysis result:\n{msg}")
-    print("✅ /invest BTCUSDT successful (Crypto path + Sentiment Analysis)\n")
+    assert "disabled" in update.message.reply_text.call_args[0][0]
     update.message.reply_text.reset_mock()
 
-    # 4. Test /invest AAPL (Stock Analysis + Sector Alpha)
-    print("--- Testing /invest AAPL Command (Stock Pipeline + Sector Benchmark) ---")
-    context.args = ["AAPL"]
-    await invest(update, context)
-    
-    assert update.message.reply_text.call_count == 2
-    msg = update.message.reply_text.call_args[0][0]
-    print(f"Analysis result:\n{msg}")
-    print("✅ /invest AAPL successful (Stock path + Sector Alpha scoring)\n")
-    update.message.reply_text.reset_mock()
-
-    # 5. Test /monitor (Live scanning of active investments)
-    print("--- Testing /monitor Command (Invalidation/Target checking) ---")
-    await monitor(update, context)
-    
-    assert update.message.reply_text.call_count == 2
-    print("✅ /monitor successful (Checked Active Investments Db)\n")
-    update.message.reply_text.reset_mock()
-
-    # 6. Test /scan stocks (Live market scanning + telegram signal alerting)
-    print("--- Testing /scan stocks Command (Signal Generation & Messaging) ---")
-    context.args = ["stocks"]
     await scan(update, context)
-    
-    assert update.message.reply_text.call_count == 2
-    print("✅ /scan stocks successful (Scan loop triggered, alerts pushed if high score)\n")
-    
-    print("\n" + "="*50)
-    print("🎉 ALL END-TO-END TESTS PASSED SUCCESSFULLY!")
-    print("="*50 + "\n")
+    assert "Use `/research`" in update.message.reply_text.call_args[0][0]
+    update.message.reply_text.reset_mock()
 
-if __name__ == "__main__":
+    await monitor(update, context)
+    assert "Use `/report`" in update.message.reply_text.call_args[0][0]
+    update.message.reply_text.reset_mock()
+
+    with patch("scripts.telegram_daemon._run_cli", side_effect=["sync ok", '[{"symbol":"POLYX"}]', "Binance Research Alert\n- POLYX"]):
+        await research(update, context)
+        assert update.message.reply_text.call_count == 2
+        assert "Syncing Binance Earn offers" in update.message.reply_text.call_args_list[0][0][0]
+        assert "POLYX" in update.message.reply_text.call_args_list[1][0][0]
+    update.message.reply_text.reset_mock()
+
+    with patch("scripts.telegram_daemon._run_cli", return_value="Binance Two-Sleeve Daily Report\nSnapshot: test\nTotal equity: $1"):
+        await report(update, context)
+        assert "Binance Two-Sleeve Daily Report" in update.message.reply_text.call_args[0][0]
+    update.message.reply_text.reset_mock()
+
+    with patch(
+        "scripts.telegram_daemon._run_cli",
+        return_value="Binance Two-Sleeve Daily Report\nSnapshot: test\nTotal equity: $1\nEarn sleeve: $1\nSpot sleeve: $0\nLocked cash: $0\nRealized PnL: $0\nRolling returns: 7d 0.00% | 30d 0.00%",
+    ):
+        await stats(update, context)
+        assert "Total equity" in update.message.reply_text.call_args[0][0]
+
+
+def test_run_e2e_telegram():
     asyncio.run(run_e2e_tests())

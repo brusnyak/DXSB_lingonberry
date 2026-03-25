@@ -30,6 +30,9 @@ class BinanceGateway:
     def get_ticker_24h(self, symbol: str) -> Dict:
         return self.client.get_ticker(symbol=symbol)
 
+    def get_tickers_24h(self) -> List[Dict]:
+        return self.client.get_ticker()
+
     def get_klines(self, symbol: str, interval: str, limit: int = 200) -> List[Dict]:
         rows = self.client.get_klines(symbol=symbol, interval=interval, limit=limit)
         candles = []
@@ -98,4 +101,3 @@ def ms_to_iso(ms: Optional[int]) -> Optional[str]:
     if not ms:
         return None
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-

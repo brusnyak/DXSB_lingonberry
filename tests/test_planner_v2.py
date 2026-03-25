@@ -2,8 +2,10 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from src.planner.backtest import BacktestService
+from src.planner.context_enrichment import ExternalContextService
 from src.planner.events import EventIngestService
 from src.planner.portfolio import PortfolioService
+from src.planner.research import BinanceResearchService
 from src.planner.reporting import ReportingService
 from src.planner.storage import PlannerRepository
 from src.planner.strategy import SpotStrategyService
@@ -66,6 +68,58 @@ class FakeGateway:
                     "productType": "LOCKED",
                     "endTime": end_time,
                     "totalRewardAmt": "4.0",
+                }
+            ]
+        }
+
+    def get_simple_earn_flexible_product_list(self, size=100):
+        return {
+            "rows": [
+                {
+                    "asset": "DOLO",
+                    "latestAnnualPercentageRate": "0.18",
+                    "airDropPercentageRate": "0.00",
+                    "canPurchase": True,
+                    "canRedeem": True,
+                    "isSoldOut": False,
+                    "hot": True,
+                    "minPurchaseAmount": "1",
+                    "productId": "DOLO001",
+                    "status": "PURCHASING",
+                },
+                {
+                    "asset": "USDT",
+                    "latestAnnualPercentageRate": "0.04",
+                    "airDropPercentageRate": "0.00",
+                    "canPurchase": True,
+                    "canRedeem": True,
+                    "isSoldOut": False,
+                    "hot": False,
+                    "minPurchaseAmount": "1",
+                    "productId": "USDT001",
+                    "status": "PURCHASING",
+                },
+            ]
+        }
+
+    def get_simple_earn_locked_product_list(self, size=100):
+        return {
+            "rows": [
+                {
+                    "projectId": "ENSO30",
+                    "detail": {
+                        "asset": "ENSO",
+                        "rewardAsset": "ENSO",
+                        "duration": 30,
+                        "renewable": True,
+                        "isSoldOut": False,
+                        "apr": "0.12",
+                        "status": "CREATED",
+                    },
+                    "quota": {
+                        "totalPersonalQuota": "100",
+                        "minimum": "1",
+                    },
                 }
             ]
         }
@@ -149,6 +203,44 @@ class FakeGateway:
                 }
             )
         return candles
+
+
+class FakeCoinGeckoClient:
+    def search(self, query):
+        return {"coins": [{"id": "polyx", "symbol": "POLYX", "name": "Polymesh"}]}
+
+    def markets(self, vs_currency="usd", ids=None, category=None, per_page=50, page=1):
+        return [
+            {
+                "id": "polyx",
+                "market_cap_rank": 180,
+                "market_cap": 250000000,
+                "total_volume": 12000000,
+                "price_change_percentage_24h": 2.5,
+                "price_change_percentage_7d_in_currency": 12.0,
+            }
+        ]
+
+    def trending(self):
+        return {"coins": [{"item": {"id": "polyx"}}]}
+
+    def coin_details(self, coin_id):
+        return {
+            "categories": ["Real World Assets", "Layer 1"],
+            "links": {"homepage": ["https://polymesh.network"]},
+            "genesis_date": None,
+        }
+
+
+class FakeDuneClient:
+    def latest_result(self, query_id, limit=None):
+        if query_id == 100:
+            return {"result": {"rows": [{"symbol": "POLYX", "netflow_usd": 1500000}]}}
+        if query_id == 200:
+            return {"result": {"rows": [{"symbol": "POLYX", "unlock_date": "2026-03-26", "unlock_pct": 2.4}]}}
+        if query_id == 300:
+            return {"result": {"rows": [{"symbol": "POLYX", "smart_wallets": 8, "position_delta_usd": 350000}]}}
+        return {"result": {"rows": []}}
 
 
 def test_portfolio_sync_computes_free_cash_and_locked_earn(tmp_path):
@@ -355,6 +447,377 @@ def test_backtest_outputs_metrics_and_catalyst_breakdown(tmp_path):
     assert "profit_factor" in metrics
     assert "by_catalyst" in metrics
     assert metrics["by_catalyst"]["alpha_spotlight"] >= 1
+
+
+def test_sync_earn_products_and_scan_research_candidates(tmp_path):
+    repo = PlannerRepository(str(tmp_path / "planner.db"))
+    snapshot_ts = iso_days_ago(0)
+    repo.record_snapshot(
+        {
+            "snapshot_ts": snapshot_ts,
+            "total_equity": 1000.0,
+            "total_equity_eur": 900.0,
+            "earn_equity": 700.0,
+            "spot_equity": 0.0,
+            "free_cash": 400.0,
+            "free_cash_eur": 360.0,
+            "locked_cash": 0.0,
+            "buying_power": 200.0,
+            "realized_pnl_usd": 0.0,
+            "unrealized_pnl_usd": 0.0,
+            "accrued_yield_usd": 0.0,
+        },
+        [],
+        [],
+        [],
+    )
+    context_service = ExternalContextService(
+        repository=repo,
+        coingecko_client=FakeCoinGeckoClient(),
+        dune_client=FakeDuneClient(),
+    )
+    service = BinanceResearchService(repo, FakeGateway(), context_service=context_service)
+    synced = service.sync_earn_products()
+    assert synced["offers"] >= 2
+
+    repo.insert_events(
+        [
+            {
+                "symbol": "DOLO",
+                "event_type": "ai_insight",
+                "source": "manual",
+                "event_ts": iso_days_ago(0),
+                "headline": "Upcoming token unlock tomorrow",
+                "url": None,
+                "strength": 1.0,
+            }
+        ]
+    )
+    rows = service.scan_earn_opportunities()
+    assert rows
+    dolo = next(row for row in rows if row["symbol_or_asset"] == "DOLO")
+    assert dolo["status"] == "actionable"
+    assert "Simple Earn APR" in dolo["reason"]
+    assert "unlock" in dolo["reason"].lower()
+
+
+def test_external_context_service_combines_coingecko_details(tmp_path):
+    repo = PlannerRepository(str(tmp_path / "planner.db"))
+    service = ExternalContextService(
+        repository=repo,
+        coingecko_client=FakeCoinGeckoClient(),
+        dune_client=FakeDuneClient(),
+    )
+    context = service.get_asset_context("POLYX")
+    assert context["coingecko"]["market_cap_rank"] == 180
+    assert context["coingecko"]["trending"] is True
+    assert context["coingecko"]["market_cap_band"] == "mid-cap"
+    assert context["coingecko"]["categories"][0] == "Real World Assets"
+    assert any("CoinGecko trending" in note for note in context["notes"])
+
+
+def test_batch_dune_context_adds_flow_and_positioning_notes(tmp_path):
+    repo = PlannerRepository(str(tmp_path / "planner.db"))
+    service = ExternalContextService(
+        repository=repo,
+        coingecko_client=FakeCoinGeckoClient(),
+        dune_client=FakeDuneClient(),
+    )
+    service.dune_signals.binance_flows = lambda assets: {"POLYX": {"symbol": "POLYX", "netflow_usd": 1500000}}
+    service.dune_signals.dex_trader_positioning = lambda assets: {"POLYX": {"symbol": "POLYX", "smart_wallets": 8, "position_delta_usd": 350000}}
+    context = service.get_batch_dune_context(["POLYX"])
+    assert "POLYX" in context
+    assert any("netflow" in note.lower() for note in context["POLYX"]["notes"])
+    assert any("positioning" in note.lower() for note in context["POLYX"]["notes"])
+
+
+def test_daily_report_includes_research_monitor_and_simple_earn_board(tmp_path):
+    repo = PlannerRepository(str(tmp_path / "planner.db"))
+    snapshot_ts = iso_days_ago(0)
+    repo.record_snapshot(
+        {
+            "snapshot_ts": snapshot_ts,
+            "total_equity": 1000.0,
+            "total_equity_eur": 900.0,
+            "earn_equity": 700.0,
+            "spot_equity": 0.0,
+            "free_cash": 300.0,
+            "free_cash_eur": 270.0,
+            "locked_cash": 0.0,
+            "buying_power": 100.0,
+            "realized_pnl_usd": 0.0,
+            "unrealized_pnl_usd": 0.0,
+            "accrued_yield_usd": 0.0,
+        },
+        [],
+        [],
+        [],
+    )
+    repo.replace_earn_products(
+        snapshot_ts,
+        [
+            {
+                "snapshot_ts": snapshot_ts,
+                "asset": "POLYX",
+                "product_type": "FLEXIBLE",
+                "apr": 0.2,
+                "duration_days": None,
+                "min_purchase_amount": 1.0,
+                "can_purchase": 1,
+                "can_redeem": 1,
+                "is_sold_out": 0,
+                "is_hot": 1,
+                "status": "PURCHASING",
+                "extra_reward_asset": None,
+                "extra_reward_apr": 0.0,
+                "raw_json": "{}",
+            }
+        ],
+    )
+    repo.add_recommendations(
+        [
+            {
+                "ts": snapshot_ts,
+                "sleeve": "research",
+                "symbol_or_asset": "POLYX",
+                "action": "WATCH_SPOT",
+                "priority": 40,
+                "status": "watchlist",
+                "reason": "Simple Earn APR 20.00%; featured on Binance Earn",
+                "capital_required_usd": 0.0,
+                "expires_ts": iso_days_ago(-2),
+                "metadata_json": "{\"external_context\":{\"coingecko\":{\"market_cap_rank\":180,\"trending\":true,\"market_cap_band\":\"mid-cap\",\"categories\":[\"Real World Assets\"]}}}",
+            }
+        ]
+    )
+    text = ReportingService(repo).daily_report_text()
+    assert "Binance research monitor" in text
+    assert "watch POLYX" in text
+    assert "CG rank #180" in text
+    assert "mid-cap" in text
+    assert "Simple Earn board" in text
+    assert "POLYX FLEXIBLE" in text
+
+
+def test_research_alert_uses_history_counts(tmp_path):
+    repo = PlannerRepository(str(tmp_path / "planner.db"))
+    snapshot_ts = iso_days_ago(0)
+    repo.add_recommendations(
+        [
+            {
+                "ts": snapshot_ts,
+                "sleeve": "research",
+                "symbol_or_asset": "POLYX",
+                "action": "WATCH_SPOT",
+                "priority": 40,
+                "status": "watchlist",
+                "reason": "Simple Earn APR 20.00%; CoinGecko market cap rank #180",
+                "capital_required_usd": 0.0,
+                "expires_ts": iso_days_ago(-2),
+                "metadata_json": "{\"external_context\":{\"coingecko\":{\"market_cap_rank\":180}}}",
+            },
+            {
+                "ts": snapshot_ts,
+                "sleeve": "research",
+                "symbol_or_asset": "GAS",
+                "action": "BUY_SPOT",
+                "priority": 60,
+                "status": "blocked",
+                "reason": "Simple Earn APR 31.64%; blocked because free cash would breach the reserve buffer",
+                "capital_required_usd": 71.27,
+                "expires_ts": iso_days_ago(-2),
+                "metadata_json": "{}",
+            },
+        ]
+    )
+    repo.record_research_candidates(
+        [
+            {
+                "ts": iso_days_ago(2),
+                "sleeve": "research",
+                "symbol_or_asset": "POLYX",
+                "action": "WATCH_SPOT",
+                "priority": 40,
+                "status": "watchlist",
+                "reason": "old",
+                "capital_required_usd": 0.0,
+                "metadata_json": "{}",
+            },
+            {
+                "ts": iso_days_ago(1),
+                "sleeve": "research",
+                "symbol_or_asset": "POLYX",
+                "action": "WATCH_SPOT",
+                "priority": 40,
+                "status": "watchlist",
+                "reason": "new",
+                "capital_required_usd": 0.0,
+                "metadata_json": "{}",
+            },
+            {
+                "ts": iso_days_ago(1),
+                "sleeve": "research",
+                "symbol_or_asset": "GAS",
+                "action": "BUY_SPOT",
+                "priority": 60,
+                "status": "blocked",
+                "reason": "blocked",
+                "capital_required_usd": 71.27,
+                "metadata_json": "{}",
+            },
+        ]
+    )
+    text = ReportingService(repo).research_alert_text()
+    assert "Binance Research Alert" in text
+    assert "POLYX" in text
+    assert "2 scans" in text
+    assert "GAS $71.27" in text
+    assert "fresh" in text
+
+
+def test_research_alert_suppresses_unchanged_rows_and_labels_transitions(tmp_path):
+    repo = PlannerRepository(str(tmp_path / "planner.db"))
+    first_ts = iso_days_ago(1)
+    repo.add_recommendations(
+        [
+            {
+                "ts": first_ts,
+                "sleeve": "research",
+                "symbol_or_asset": "GAS",
+                "action": "BUY_SPOT",
+                "priority": 60,
+                "status": "blocked",
+                "reason": "Simple Earn APR 31.64%; blocked because free cash would breach the reserve buffer",
+                "capital_required_usd": 71.27,
+                "expires_ts": iso_days_ago(-1),
+                "metadata_json": "{\"setup_type\":\"pullback\",\"entry_price\":10.0,\"ret_24h_pct\":4.0,\"ret_7d_pct\":12.0}",
+            }
+        ]
+    )
+
+    service = ReportingService(repo)
+    first_alert = service.research_alert_text()
+    assert "fresh" in first_alert
+    assert "GAS" in first_alert
+
+    repeated_alert = service.research_alert_text()
+    assert "No material research changes since last alert." in repeated_alert
+
+    repo.add_recommendations(
+        [
+            {
+                "ts": iso_days_ago(0),
+                "sleeve": "research",
+                "symbol_or_asset": "GAS",
+                "action": "BUY_SPOT",
+                "priority": 90,
+                "status": "actionable",
+                "reason": "Simple Earn APR 31.64%; price is pulling back constructively above 1d EMA20",
+                "capital_required_usd": 71.27,
+                "expires_ts": iso_days_ago(-2),
+                "metadata_json": "{\"setup_type\":\"pullback\",\"entry_price\":10.2,\"ret_24h_pct\":5.0,\"ret_7d_pct\":14.0}",
+            }
+        ]
+    )
+    improved_alert = service.research_alert_text()
+    assert "improving" in improved_alert
+    assert "GAS $71.27" in improved_alert
+
+    repo.add_recommendations(
+        [
+            {
+                "ts": iso_days_ago(-1),
+                "sleeve": "research",
+                "symbol_or_asset": "GAS",
+                "action": "BUY_SPOT",
+                "priority": 60,
+                "status": "actionable",
+                "reason": "Simple Earn APR 31.64%; volume remains elevated after pullback retest",
+                "capital_required_usd": 71.27,
+                "expires_ts": iso_days_ago(-3),
+                "metadata_json": "{\"setup_type\":\"pullback\",\"entry_price\":10.4,\"ret_24h_pct\":6.5,\"ret_7d_pct\":16.0}",
+            }
+        ]
+    )
+    recurring_alert = service.research_alert_text()
+    assert "recurring" in recurring_alert
+
+
+def test_scan_research_records_outcome_snapshots(tmp_path):
+    repo = PlannerRepository(str(tmp_path / "planner.db"))
+    snapshot_ts = iso_days_ago(0)
+    repo.record_snapshot(
+        {
+            "snapshot_ts": snapshot_ts,
+            "total_equity": 1000.0,
+            "total_equity_eur": 900.0,
+            "earn_equity": 700.0,
+            "spot_equity": 0.0,
+            "free_cash": 400.0,
+            "free_cash_eur": 360.0,
+            "locked_cash": 0.0,
+            "buying_power": 200.0,
+            "realized_pnl_usd": 0.0,
+            "unrealized_pnl_usd": 0.0,
+            "accrued_yield_usd": 0.0,
+        },
+        [],
+        [],
+        [],
+    )
+    context_service = ExternalContextService(
+        repository=repo,
+        coingecko_client=FakeCoinGeckoClient(),
+        dune_client=FakeDuneClient(),
+    )
+    service = BinanceResearchService(repo, FakeGateway(), context_service=context_service)
+    service.sync_earn_products()
+    rows = service.scan_earn_opportunities()
+    assert rows
+
+    outcomes = repo.recent_research_outcomes("DOLO")
+    assert outcomes
+    latest = outcomes[0]
+    assert latest["status"] == "actionable"
+    assert latest["entry_price"] == 10.0
+    assert latest["ret_24h_pct"] == 10.0
+    assert latest["quote_volume_usd_24h"] == 8000000.0
+
+
+def test_research_alert_collapses_multiple_actions_to_one_asset_line(tmp_path):
+    repo = PlannerRepository(str(tmp_path / "planner.db"))
+    ts = iso_days_ago(0)
+    repo.add_recommendations(
+        [
+            {
+                "ts": ts,
+                "sleeve": "research",
+                "symbol_or_asset": "KITE",
+                "action": "WATCH_SPOT",
+                "priority": 40,
+                "status": "watchlist",
+                "reason": "Simple Earn APR 10.87%; 7d trend is still positive",
+                "capital_required_usd": 0.0,
+                "expires_ts": iso_days_ago(-2),
+                "metadata_json": "{\"setup_type\":\"watch\"}",
+            },
+            {
+                "ts": ts,
+                "sleeve": "research",
+                "symbol_or_asset": "KITE",
+                "action": "BUY_SPOT",
+                "priority": 60,
+                "status": "blocked",
+                "reason": "Simple Earn APR 10.87%; blocked because free cash would breach the reserve buffer",
+                "capital_required_usd": 71.27,
+                "expires_ts": iso_days_ago(-2),
+                "metadata_json": "{\"setup_type\":\"continuation\",\"entry_price\":5.0}",
+            },
+        ]
+    )
+    text = ReportingService(repo).research_alert_text()
+    assert text.count("KITE") == 1
+    assert "blocked because free cash would breach the reserve buffer" in text
 
 
 def test_manual_reconciliation_can_insert_and_close_position(tmp_path):

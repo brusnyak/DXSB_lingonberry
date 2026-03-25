@@ -24,6 +24,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "min_quote_volume_usd_24h": 5_000_000,
         "btc_risk_off_daily_return_pct": -4.0,
         "asset_max_extension_above_ema20_pct": 25.0,
+        "research_min_apr": 0.03,
+        "research_min_locked_apr": 0.08,
+        "research_locked_max_duration_days": 30,
+        "research_max_assets_per_scan": 25,
+        "research_dune_max_assets_per_scan": 5,
+        "research_coingecko_cache_ttl_sec": 21600,
+        "research_dune_cache_ttl_sec": 21600,
+        "research_dune_query_timeout_sec": 20,
     },
 }
 

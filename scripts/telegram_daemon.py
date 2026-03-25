@@ -1,165 +1,102 @@
-import sys
-import os
-import json
+import asyncio
 import logging
+import os
+import subprocess
+import sys
+from typing import List
+
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.adapters.market_adapters import StockAdapter, BinanceAdapter
-from src.analysis.ict_analyst import ICTAnalyst
-from src.analysis.sentiment_analyst import SentimentAnalyst
-from src.core.investment_journal import InvestmentJournal
-from src.core.performance_journal import PerformanceJournal
-from scripts.live_scanner import run_investment_scanner
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+
+DEPRECATION_NOTE = (
+    "Legacy DexScreener and ICT scanner commands are disabled. "
+    "This bot now uses the Binance planner workflow."
+)
+
+
+def _run_cli(args: List[str]) -> str:
+    result = subprocess.run(
+        [sys.executable, "cli.py", *args],
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "🤖 *Investment Discovery Engine*\n\n"
+        "Binance research bot\n\n"
         "Available Commands:\n"
-        "/invest [symbol] - Run analysis on a specific stock/crypto\n"
-        "/scan [stocks|crypto] - Run a full discovery scan\n"
-        "/monitor - Check active investments for targets/invalidation\n"
-        "/stats - View performance journaling metrics"
+        "/report - Run the planner daily report\n"
+        "/research - Sync Binance Earn offers and scan research candidates\n"
+        "/scan - Deprecated legacy scanner command\n"
+        "/monitor - Deprecated legacy monitoring command\n"
+        "/invest - Deprecated legacy analysis command\n"
+        "/stats - Show planner-oriented status"
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg)
+
 
 async def invest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Please provide a symbol. Example: /invest AAPL or /invest BTCUSDT")
-        return
-
-    symbol = context.args[0].upper()
-    await update.message.reply_text(f"🔍 Analyzing {symbol}...")
-
-    with open("config.json", "r") as f:
-        config = json.load(f)
-
-    analyst = ICTAnalyst()
-    sentiment = SentimentAnalyst()
-    
-    # Determine if stock or crypto (basic heuristic)
-    mode = "crypto" if "USDT" in symbol else "stocks"
-    sentiment_bonus = sentiment.get_contrarian_bonus(mode)
-
-    if mode == "crypto":
-        adapter = BinanceAdapter()
-        candles = adapter.fetch_candles(symbol, interval="1d")
-        benchmark = adapter.fetch_candles("BTCUSDT", interval="1d")
-        sector_candles = None
-    else:
-        adapter = StockAdapter(config)
-        candles = adapter.fetch_candles(symbol, interval="1d")
-        benchmark = adapter.fetch_candles("SPY", interval="1d")
-        sector_etf = adapter.get_sector_etf(symbol)
-        sector_candles = adapter.fetch_candles(sector_etf, interval="1d")
-
-    if not candles:
-        await update.message.reply_text(f"❌ Could not fetch data for {symbol}.")
-        return
-
-    res = analyst.calculate_investment_score(
-        candles, symbol, benchmark_candles=benchmark, 
-        sector_candles=sector_candles, sentiment_bonus=sentiment_bonus
+    await update.message.reply_text(
+        f"{DEPRECATION_NOTE} Use `/report` and `/research` instead."
     )
 
-    color = "🟢" if res.score >= 80 else "🟡" if res.score >= 60 else "🔴"
-    msg = (
-        f"{color} *Analysis for {symbol}*\n\n"
-        f"Score: {res.score:.1f}/100\n"
-        f"Type: {res.discovery_type}\n\n"
-        f"*Logic:*\n{res.logic}\n\n"
-        f"*Entry Zone:*\n{res.entry_zone}\n\n"
-        f"*Invalidation:*\n{res.invalidation_level}\n\n"
-        f"*Target Potential:*\n{res.target_potential}"
-    )
-    await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mode = "stocks"
-    if context.args and context.args[0].lower() == "crypto":
-        mode = "crypto"
-        
-    await update.message.reply_text(f"📡 Starting full discovery scan for {mode}...")
-    try:
-        run_investment_scanner(limit=10, mode=mode)
-        await update.message.reply_text("✅ Scan completed. Check Telegram channel for high-score alerts.")
-    except Exception as e:
-         await update.message.reply_text(f"❌ Scan failed: {e}")
+    await update.message.reply_text(
+        f"{DEPRECATION_NOTE} Use `/research` to sync Earn offers and scan Binance candidates."
+    )
+
 
 async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🕵️ Checking active investments...")
+    await update.message.reply_text(
+        f"{DEPRECATION_NOTE} Use `/report` for current positions, cash, and blocked ideas."
+    )
+
+
+async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        run_investment_scanner(mode="stocks", monitor=True)
-        await update.message.reply_text("✅ Monitoring completed.")
-    except Exception as e:
-         await update.message.reply_text(f"❌ Monitoring failed: {e}")
+        text = await asyncio.to_thread(_run_cli, ["report", "daily"])
+        await update.message.reply_text(text)
+    except Exception as exc:
+        await update.message.reply_text(f"Planner report failed: {exc}")
+
+
+async def research(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        await update.message.reply_text("Syncing Binance Earn offers and scanning research candidates...")
+        await asyncio.to_thread(_run_cli, ["research", "sync-earn"])
+        await asyncio.to_thread(_run_cli, ["strategy", "scan-research"])
+        output = await asyncio.to_thread(_run_cli, ["report", "research"])
+        await update.message.reply_text(output[:4000] or "No research alert generated.")
+    except Exception as exc:
+        await update.message.reply_text(f"Research scan failed: {exc}")
+
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    journal = InvestmentJournal("dex_analytics.db")
-    perf_journal = PerformanceJournal("dex_analytics.db")
-    
-    active = len(journal.get_active_investments())
-    stats = perf_journal.get_stats()
-    
-    base_balance = 10000.0
-    growth_pct = stats.get("total_pnl_pct", 0.0)
-    current_balance = base_balance * (1 + (growth_pct / 100))
-    
-    msg = (
-        "📊 *Paper Trading Performance*\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"💼 *Simulated Balance:* `${current_balance:,.2f}`\n"
-        f"📈 *Net Growth:* `+{growth_pct:.2f}%`\n\n"
-        f"🎯 *Win Rate:* `{stats.get('win_rate', 0):.1f}%`\n"
-        f"✅ *Wins:* `{stats.get('wins', 0)}` | ❌ *Losses:* `{stats.get('losses', 0)}`\n"
-        f"⏱️ *Active Theses:* `{active}`\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "_(Starting theoretical balance: $10,000)_"
-    )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    try:
+        text = await asyncio.to_thread(_run_cli, ["report", "daily"])
+        lines = text.splitlines()
+        summary = "\n".join(lines[:8])
+        await update.message.reply_text(summary)
+    except Exception as exc:
+        await update.message.reply_text(f"Planner status failed: {exc}")
+
 
 async def eod(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """End-of-Day summary of all investment signals from the past 24 hours."""
-    import sqlite3
-    from datetime import datetime, timezone, timedelta
-    
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    conn = sqlite3.connect("dex_analytics.db")
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        "SELECT * FROM investments WHERE ts_utc >= ? ORDER BY score DESC",
-        (cutoff,)
-    ).fetchall()
-    conn.close()
-    
-    if not rows:
-        await update.message.reply_text("📋 No investment signals in the past 24h.")
-        return
-    
-    today_str = datetime.now().strftime('%d %b %Y')
-    lines = [f"*📅 EOD Summary — {today_str}*", "━━━━━━━━━━━━━━━━━━"]
-    for r in rows:
-        status_icon = "🚀" if r["status"] == "TARGET_REACHED" else "❌" if r["status"] == "INVALIDATED" else "⏳"
-        asset_icon = "🔗" if r["discovery_type"] == "crypto" else "📈"
-        entry_short = r["entry_zone"][:35] + "..." if len(r["entry_zone"]) > 35 else r["entry_zone"]
-        lines.append(
-            f"{status_icon} {asset_icon} *{r['symbol']}* — `{r['score']:.0f}/95` — _{r['status']}_\n"
-            f"   Entry: `{entry_short}`\n"
-            f"   Potential: `{r['target_potential']}`"
-        )
-    
-    perf = PerformanceJournal("dex_analytics.db").get_stats()
-    lines += [
-        "━━━━━━━━━━━━━━━━━━",
-        f"🏆 *Overall Stats* — W: `{perf.get('wins', 0)}` L: `{perf.get('losses', 0)}` | WR: `{perf.get('win_rate', 0):.0f}%`"
-    ]
-    
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await report(update, context)
+
 
 def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -168,16 +105,18 @@ def main():
         return
 
     application = Application.builder().token(token).build()
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("invest", invest))
     application.add_handler(CommandHandler("scan", scan))
     application.add_handler(CommandHandler("monitor", monitor))
+    application.add_handler(CommandHandler("report", report))
+    application.add_handler(CommandHandler("research", research))
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("eod", eod))
 
-    logger.info("Starting Telegram interactive daemon...")
+    logger.info("Starting Telegram planner daemon...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
     main()
